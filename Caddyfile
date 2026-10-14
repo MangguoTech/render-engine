@@ -1,0 +1,45 @@
+{
+    admin off
+    auto_https off
+}
+
+:{$PORT:10000} {
+    # 1. Health check endpoint for external ping / uptime bot
+    handle /health {
+        respond "OK" 200
+    }
+
+    # 2. EasyTier WebSocket routing
+    # Proxies to local EasyTier listener ws://127.0.0.1:11010
+    # Handles both /et and /et/* subpaths
+    handle /et* {
+        reverse_proxy 127.0.0.1:11010 {
+            header_up Host {host}
+            header_up X-Real-IP {remote_host}
+            header_up X-Forwarded-For {remote_host}
+            header_up X-Forwarded-Proto {scheme}
+        }
+    }
+
+    # 3. Emergency Web Terminal (ttyd)
+    # ttyd handles its own subpath and basic auth
+    handle /shell* {
+        reverse_proxy 127.0.0.1:7681 {
+            header_up Host {host}
+            header_up X-Real-IP {remote_host}
+            header_up X-Forwarded-For {remote_host}
+            header_up X-Forwarded-Proto {scheme}
+        }
+    }
+
+    # Default fallback: WebSocket upgrade check or welcome prompt
+    handle {
+        @is_websocket {
+            header Connection *Upgrade*
+            header Upgrade websocket
+        }
+        reverse_proxy @is_websocket 127.0.0.1:11010
+
+        respond "EasyTier Mesh Gateway is running. Use /health for probe." 200
+    }
+}
