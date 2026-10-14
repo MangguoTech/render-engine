@@ -23,14 +23,14 @@
 
 ### 方式 1：通过 Git 仓库一键部署（推荐）
 
-1. 将当前目录代码推送到你的 GitHub 仓库（例如 `render-easytier`）：
+1. 将当前目录代码推送到你的 GitHub 仓库（例如 `render-engine`）：
    ```bash
-   cd render-easytier
+   cd render-engine
    git init
    git add .
-   git commit -m "feat: initial easytier render service"
+   git commit -m "feat: initial production-ready easytier render service"
    git branch -M main
-   git remote add origin https://github.com/<your-username>/render-easytier.git
+   git remote add origin https://github.com/dengyie/render-engine.git
    git push -u origin main
    ```
 
