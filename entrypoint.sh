@@ -318,6 +318,7 @@ FAIL_COUNT_CADDY=0
 FAIL_COUNT_ET=0
 FAIL_COUNT_SSHD=0
 FAIL_COUNT_TTYD=0
+FAIL_COUNT_SINGBOX=0
 MAX_FAILURES=5
 
 while true; do
@@ -331,6 +332,7 @@ while true; do
         fi
         caddy run --config /etc/caddy/Caddyfile --adapter caddyfile &
         PID_CADDY=$!
+        PIDS+=("$PID_CADDY")
     fi
 
     # Check EasyTier
@@ -343,6 +345,7 @@ while true; do
         fi
         /usr/local/bin/easytier-core "${ET_ARGS[@]}" &
         PID_ET=$!
+        PIDS+=("$PID_ET")
     fi
 
     # Check SSHD
@@ -355,6 +358,7 @@ while true; do
         fi
         /usr/sbin/sshd -D -e &
         PID_SSHD=$!
+        PIDS+=("$PID_SSHD")
     fi
 
     # Check ttyd
@@ -373,6 +377,7 @@ while true; do
             --credential "${TTYD_USER}:${TTYD_PASS}" \
             /bin/bash &
         PID_TTYD=$!
+        PIDS+=("$PID_TTYD")
     fi
 
     # Check Komari Agent
@@ -386,15 +391,23 @@ while true; do
                 exec /usr/local/bin/komari-agent --prefer-cgroup-limits
             ) >>/var/log/komari-agent.log 2>&1 &
             PID_KOMARI=$!
+            PIDS+=("$PID_KOMARI")
         fi
     fi
 
-    # Check sing-box
+    # Check sing-box with Circuit Breaker
     if command -v sing-box >/dev/null 2>&1 && [ -f /etc/sing-box/config.json ]; then
         if [ -n "$PID_SINGBOX" ] && ! kill -0 "$PID_SINGBOX" 2>/dev/null; then
-            warn "sing-box process died. Restarting..."
-            sing-box run -c /etc/sing-box/config.json >>/var/log/sing-box/sing-box.log 2>&1 &
-            PID_SINGBOX=$!
+            ((FAIL_COUNT_SINGBOX++)) || true
+            warn "sing-box process died! (Failure count: $FAIL_COUNT_SINGBOX/$MAX_FAILURES)"
+            if [ "$FAIL_COUNT_SINGBOX" -ge "$MAX_FAILURES" ]; then
+                err "sing-box exceeded maximum restart limit ($MAX_FAILURES). Stopping auto-restart to prevent log flooding."
+                PID_SINGBOX=""
+            else
+                sing-box run -c /etc/sing-box/config.json >>/var/log/sing-box/sing-box.log 2>&1 &
+                PID_SINGBOX=$!
+                PIDS+=("$PID_SINGBOX")
+            fi
         fi
     fi
 
