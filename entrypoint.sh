@@ -47,7 +47,7 @@ PasswordAuthentication yes
 PubkeyAuthentication yes
 AuthorizedKeysFile .ssh/authorized_keys
 ChallengeResponseAuthentication no
-UsePAM no
+# UsePAM no (Alpine OpenSSH has no PAM support)
 X11Forwarding no
 PrintMotd no
 AcceptEnv LANG LC_*

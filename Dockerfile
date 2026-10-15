@@ -8,7 +8,7 @@ LABEL maintainer="DevOps Team" \
       description="EasyTier with SSH & Caddy reverse proxy on Render Free Tier"
 
 # Explicit upstream release versions for reproducible builds
-ARG EASYTIER_VERSION="v2.7.0"
+ARG EASYTIER_VERSION="v2.6.4"
 ARG TTYD_VERSION="1.7.7"
 
 # Set environment
