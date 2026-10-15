@@ -32,6 +32,17 @@
         }
     }
 
+    # 4. sing-box VLESS WebSocket Ingress
+    # Proxies to local sing-box vless-ws listener at 127.0.0.1:20808
+    handle /vless-ws* {
+        reverse_proxy 127.0.0.1:20808 {
+            header_up Host {host}
+            header_up X-Real-IP {remote_host}
+            header_up X-Forwarded-For {remote_host}
+            header_up X-Forwarded-Proto {scheme}
+        }
+    }
+
     # Default fallback: WebSocket upgrade check or welcome prompt
     handle {
         @is_websocket {

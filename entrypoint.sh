@@ -121,8 +121,8 @@ ET_ARGS+=(-l "ws://127.0.0.1:11010")
 ET_ARGS+=(--no-tun)
 ET_ARGS+=(--use-smoltcp)
 
-# Ports to expose over virtual IP smoltcp network (SSH and backup port)
-ET_ARGS+=(--tcp-whitelist 22 2222)
+# Ports to expose over virtual IP smoltcp network (SSH and backup port, sing-box mixed proxy)
+ET_ARGS+=(--tcp-whitelist 22 2222 10808)
 
 # Optional hostname
 if [ -n "${ET_HOSTNAME:-}" ]; then
@@ -245,11 +245,66 @@ else
     log "komari-agent binary or /etc/komari-agent.env not present; skipping."
 fi
 
+# Start sing-box (Dual inbound: mixed on 10808 for mesh, vless-ws on 20808 for Caddy)
+PID_SINGBOX=""
+SINGBOX_UUID="${SINGBOX_UUID:-1da2cc31-2c34-4b0b-b83c-ce3f7b8e6c2c}"
+mkdir -p /etc/sing-box /var/log/sing-box
+if [ ! -f /etc/sing-box/config.json ]; then
+    cat > /etc/sing-box/config.json << EOF
+{
+  "log": {
+    "level": "info",
+    "timestamp": true
+  },
+  "inbounds": [
+    {
+      "type": "mixed",
+      "tag": "mixed-in",
+      "listen": "0.0.0.0",
+      "listen_port": 10808
+    },
+    {
+      "type": "vless",
+      "tag": "vless-in",
+      "listen": "127.0.0.1",
+      "listen_port": 20808,
+      "users": [
+        {
+          "uuid": "${SINGBOX_UUID}"
+        }
+      ],
+      "transport": {
+        "type": "ws",
+        "path": "/vless-ws"
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "direct",
+      "tag": "direct"
+    }
+  ]
+}
+EOF
+fi
+
+if command -v sing-box >/dev/null 2>&1; then
+    log "Starting sing-box..."
+    sing-box run -c /etc/sing-box/config.json >/var/log/sing-box/sing-box.log 2>&1 &
+    PID_SINGBOX=$!
+    PIDS+=("$PID_SINGBOX")
+    log "sing-box started (PID $PID_SINGBOX, mixed 0.0.0.0:10808, vless-ws 127.0.0.1:20808)."
+else
+    log "sing-box binary not found in PATH; skipping."
+fi
+
 log "All services initiated successfully."
-log "Caddy: :$PORT (/health, /et, /shell)"
+log "Caddy: :$PORT (/health, /et, /shell, /vless-ws)"
 log "EasyTier: ws://127.0.0.1:11010"
 log "SSHD: 127.0.0.1:22 and 127.0.0.1:2222"
 log "ttyd: 127.0.0.1:7681 (/shell)"
+log "sing-box: 0.0.0.0:10808 (mixed), 127.0.0.1:20808 (vless-ws)"
 
 # ------------------------------------------------------------------------------
 # 4. Supervise Processes Loop with Crash-Loop Circuit Breaker
@@ -326,6 +381,15 @@ while true; do
                 exec /usr/local/bin/komari-agent --prefer-cgroup-limits
             ) >>/var/log/komari-agent.log 2>&1 &
             PID_KOMARI=$!
+        fi
+    fi
+
+    # Check sing-box
+    if command -v sing-box >/dev/null 2>&1 && [ -f /etc/sing-box/config.json ]; then
+        if [ -n "$PID_SINGBOX" ] && ! kill -0 "$PID_SINGBOX" 2>/dev/null; then
+            warn "sing-box process died. Restarting..."
+            sing-box run -c /etc/sing-box/config.json >>/var/log/sing-box/sing-box.log 2>&1 &
+            PID_SINGBOX=$!
         fi
     fi
 

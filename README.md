@@ -147,3 +147,20 @@ Render Free Tier 容器在 15 分钟无 HTTP 流量时会自动休眠。可通�
 2. 监控 URL：`https://<your-render-domain>/health`
 3. 监控间隔：每 **10 分钟** 发送一次 HTTP GET 请求。
 4. 返回 `200 OK`，实例即可持久保持唤醒状态。
+
+---
+
+## 🌐 代理服务 (sing-box)
+
+容器已集成 `sing-box`，提供内网与公网双向代理接入支持：
+
+1. **EasyTier 内网 Mixed 代理**：
+   - 监听：`0.0.0.0:10808`（已在 EasyTier `--tcp-whitelist` 放行）
+   - 协议：HTTP / SOCKS5 自适应
+   - 组网节点可通过 `socks5://10.144.144.90:10808` 或 `http://10.144.144.90:10808` 直接分流外部流量。
+
+2. **公网 VLESS-WebSocket 接入**：
+   - 路径：`wss://<your-render-domain>/vless-ws`
+   - 协议：VLESS over WebSocket (Caddy HTTPS 终结反代至 `127.0.0.1:20808`)
+   - 默认 UUID：`1da2cc31-2c34-4b0b-b83c-ce3f7b8e6c2c`（可通过 `SINGBOX_UUID` 环境变量重设）
+
