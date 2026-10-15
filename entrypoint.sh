@@ -208,6 +208,28 @@ PIDS+=("$PID_CADDY")
 
 # Start Komari Agent (if binary exists and env configured)
 PID_KOMARI=""
+DEFAULT_KOMARI_TOKEN="3WU9ZdCTvrDeUW8wIkYdWA"
+if [ -n "${KOMARI_TOKEN:-}" ]; then
+    AGENT_TOKEN="${KOMARI_TOKEN}"
+elif [ -z "${AGENT_TOKEN:-}" ] && [ -n "${DEFAULT_KOMARI_TOKEN}" ]; then
+    AGENT_TOKEN="${DEFAULT_KOMARI_TOKEN}"
+fi
+
+if [ -n "${AGENT_TOKEN:-}" ] && [ ! -f /etc/komari-agent.env ]; then
+    cat > /etc/komari-agent.env << EOF
+export AGENT_ENDPOINT="${KOMARI_ENDPOINT:-https://vps.mangoqwq.com}"
+export AGENT_TOKEN="${AGENT_TOKEN}"
+export AGENT_INCLUDE_MOUNTPOINTS="/"
+export AGENT_INCLUDE_NICS="eth0"
+export AGENT_DISABLE_WEB_SSH="true"
+export AGENT_DISABLE_AUTO_UPDATE="true"
+export AGENT_MONTH_ROTATE="1"
+export AGENT_INTERVAL="3"
+export AGENT_PREFER_IP_VERSION="4"
+EOF
+    chmod 600 /etc/komari-agent.env
+fi
+
 if [ -x /usr/local/bin/komari-agent ] && [ -f /etc/komari-agent.env ]; then
     log "Starting komari-agent..."
     (
