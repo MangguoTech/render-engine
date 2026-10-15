@@ -192,6 +192,7 @@ log "Starting ttyd on 127.0.0.1:7681 (/shell) with Basic Auth..."
     --port 7681 \
     --interface 127.0.0.1 \
     --base-path "/shell" \
+    --writable \
     --credential "${TTYD_USER}:${TTYD_PASS}" \
     /bin/bash &
 PID_TTYD=$!
