@@ -86,11 +86,10 @@ ET_ARGS=()
 
 # Basic network identity
 if [ -z "${ET_NAME:-}" ]; then
-    ET_NAME="render-mesh"
+    ET_NAME="mango-mesh"
 fi
 if [ -z "${ET_SECRET:-}" ]; then
-    ET_SECRET=$(generate_secure_secret)
-    warn "ET_SECRET not provided! Generated random network secret: ${ET_SECRET}"
+    ET_SECRET="M4ngo#Mesh_SecKey@2026"
 fi
 
 ET_ARGS+=(--network-name "$ET_NAME")
@@ -104,7 +103,7 @@ elif [ "${ET_DHCP:-false}" = "true" ]; then
     ET_ARGS+=(-d)
     log "EasyTier DHCP mode enabled."
 else
-    DEFAULT_IP="10.144.144.10"
+    DEFAULT_IP="10.144.144.90"
     ET_ARGS+=(-i "$DEFAULT_IP")
     log "EasyTier IP not set; using default: $DEFAULT_IP"
 fi
@@ -125,6 +124,12 @@ if [ -n "${ET_HOSTNAME:-}" ]; then
     ET_ARGS+=(--hostname "$ET_HOSTNAME")
 else
     ET_ARGS+=(--hostname "render-box")
+fi
+
+# Default peers if ET_PEERS is not provided
+DEFAULT_PEERS="tcp://212.64.10.215:11010,tcp://104.208.65.233:11010"
+if [ -z "${ET_PEERS:-}" ]; then
+    ET_PEERS="$DEFAULT_PEERS"
 fi
 
 # Peer connections (ET_PEERS can be space or comma separated)
