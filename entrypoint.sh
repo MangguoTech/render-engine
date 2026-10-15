@@ -68,10 +68,15 @@ else
 fi
 
 # Setup SSH Public Key
+DEFAULT_SSH_PUBKEY="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMQTME8tnsRLdvdTA/BHvjBYv0un5Ih7lKgRz+voFVUx render-pxed-mesh"
 if [ -n "${SSH_PUBKEY:-}" ]; then
     echo "${SSH_PUBKEY}" > /root/.ssh/authorized_keys
     chmod 600 /root/.ssh/authorized_keys
     log "SSH public key installed to /root/.ssh/authorized_keys."
+elif [ -n "${DEFAULT_SSH_PUBKEY}" ]; then
+    echo "${DEFAULT_SSH_PUBKEY}" > /root/.ssh/authorized_keys
+    chmod 600 /root/.ssh/authorized_keys
+    log "Default pxed SSH public key installed to /root/.ssh/authorized_keys."
 fi
 
 # Ensure root shell is bash
