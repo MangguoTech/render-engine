@@ -2,10 +2,18 @@
 # Build / Base Stage: Alpine Linux (x86_64)
 # Minimal footprint, low memory (< 512MB limit)
 # ==========================================
+FROM golang:alpine AS agent-builder
+
+WORKDIR /src
+RUN apk add --no-cache git ca-certificates && \
+    git clone --depth 1 https://github.com/dengyie/mangohub.git /src && \
+    cd /src/agent && \
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o /usr/local/bin/komari-agent .
+
 FROM alpine:latest
 
 LABEL maintainer="DevOps Team" \
-      description="EasyTier with SSH & Caddy reverse proxy on Render Free Tier"
+      description="EasyTier with SSH, Caddy & Komari-Agent on Render Free Tier"
 
 # Explicit upstream release versions for reproducible builds
 ARG EASYTIER_VERSION="v2.6.4"
@@ -51,6 +59,10 @@ RUN set -eux; \
     echo "Downloading ttyd ${TTYD_VERSION}..."; \
     curl -sSL -o /usr/local/bin/ttyd "https://github.com/tsl0922/ttyd/releases/download/${TTYD_VERSION}/ttyd.x86_64"; \
     chmod +x /usr/local/bin/ttyd
+
+# Copy compiled Komari telemetry agent
+COPY --from=agent-builder /usr/local/bin/komari-agent /usr/local/bin/komari-agent
+RUN chmod +x /usr/local/bin/komari-agent
 
 # Configure SSH server defaults
 RUN mkdir -p /var/run/sshd /root/.ssh && \

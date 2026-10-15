@@ -206,6 +206,23 @@ caddy run --config /etc/caddy/Caddyfile --adapter caddyfile &
 PID_CADDY=$!
 PIDS+=("$PID_CADDY")
 
+# Start Komari Agent (if binary exists and env configured)
+PID_KOMARI=""
+if [ -x /usr/local/bin/komari-agent ] && [ -f /etc/komari-agent.env ]; then
+    log "Starting komari-agent..."
+    (
+        set -a
+        . /etc/komari-agent.env
+        set +a
+        exec /usr/local/bin/komari-agent --prefer-cgroup-limits
+    ) >/var/log/komari-agent.log 2>&1 &
+    PID_KOMARI=$!
+    PIDS+=("$PID_KOMARI")
+    log "komari-agent started (PID $PID_KOMARI)."
+else
+    log "komari-agent binary or /etc/komari-agent.env not present; skipping."
+fi
+
 log "All services initiated successfully."
 log "Caddy: :$PORT (/health, /et, /shell)"
 log "EasyTier: ws://127.0.0.1:11010"
@@ -270,9 +287,24 @@ while true; do
             --port 7681 \
             --interface 127.0.0.1 \
             --base-path "/shell" \
+            --writable \
             --credential "${TTYD_USER}:${TTYD_PASS}" \
             /bin/bash &
         PID_TTYD=$!
+    fi
+
+    # Check Komari Agent
+    if [ -x /usr/local/bin/komari-agent ] && [ -f /etc/komari-agent.env ]; then
+        if [ -n "$PID_KOMARI" ] && ! kill -0 "$PID_KOMARI" 2>/dev/null; then
+            warn "komari-agent process died. Restarting..."
+            (
+                set -a
+                . /etc/komari-agent.env
+                set +a
+                exec /usr/local/bin/komari-agent --prefer-cgroup-limits
+            ) >>/var/log/komari-agent.log 2>&1 &
+            PID_KOMARI=$!
+        fi
     fi
 
     sleep 5
