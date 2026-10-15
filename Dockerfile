@@ -8,7 +8,7 @@ LABEL maintainer="DevOps Team" \
       description="EasyTier with SSH & Caddy reverse proxy on Render Free Tier"
 
 # Explicit upstream release versions for reproducible builds
-ARG EASYTIER_VERSION="v2.6.4"
+ARG EASYTIER_VERSION="v2.7.0"
 ARG TTYD_VERSION="1.7.7"
 
 # Set environment
@@ -37,7 +37,7 @@ RUN apk update && \
 # Download and install EasyTier (x86_64) with deterministic version URL
 RUN set -eux; \
     echo "Downloading EasyTier ${EASYTIER_VERSION}..."; \
-    ET_URL="https://github.com/EasyTier/EasyTier/releases/download/${EASYTIER_VERSION}/easytier-linux-x86_64.zip"; \
+    ET_URL="https://github.com/EasyTier/EasyTier/releases/download/${EASYTIER_VERSION}/easytier-linux-x86_64-${EASYTIER_VERSION}.zip"; \
     curl -sSL "$ET_URL" -o /tmp/easytier.zip; \
     unzip -q /tmp/easytier.zip -d /tmp/easytier; \
     find /tmp/easytier -type f -name "easytier-core" -exec cp {} /usr/local/bin/ \; ; \
