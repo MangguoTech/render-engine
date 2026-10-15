@@ -275,7 +275,9 @@ if [ ! -f /etc/sing-box/config.json ]; then
       ],
       "transport": {
         "type": "ws",
-        "path": "/vless-ws"
+        "path": "/vless-ws",
+        "max_early_data": 2048,
+        "early_data_header_name": "Sec-WebSocket-Protocol"
       }
     }
   ],
@@ -284,7 +286,10 @@ if [ ! -f /etc/sing-box/config.json ]; then
       "type": "direct",
       "tag": "direct"
     }
-  ]
+  ],
+  "route": {
+    "auto_detect_interface": true
+  }
 }
 EOF
 fi
