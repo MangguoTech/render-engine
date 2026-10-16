@@ -209,17 +209,21 @@ PIDS+=("$PID_CADDY")
 # Start Komari Agent (if binary exists and env configured)
 PID_KOMARI=""
 DEFAULT_KOMARI_TOKEN="3WU9ZdCTvrDeUW8wIkYdWA"
+DEFAULT_KOMARI_FORCE_DISK_TOTAL="5368709120"
+FORCE_DISK_TOTAL="${KOMARI_FORCE_DISK_TOTAL:-${AGENT_FORCE_DISK_TOTAL:-$DEFAULT_KOMARI_FORCE_DISK_TOTAL}}"
+
 if [ -n "${KOMARI_TOKEN:-}" ]; then
     AGENT_TOKEN="${KOMARI_TOKEN}"
 elif [ -z "${AGENT_TOKEN:-}" ] && [ -n "${DEFAULT_KOMARI_TOKEN}" ]; then
     AGENT_TOKEN="${DEFAULT_KOMARI_TOKEN}"
 fi
 
-if [ -n "${AGENT_TOKEN:-}" ] && [ ! -f /etc/komari-agent.env ]; then
+if [ -n "${AGENT_TOKEN:-}" ]; then
     cat > /etc/komari-agent.env << EOF
 export AGENT_ENDPOINT="${KOMARI_ENDPOINT:-https://vps.mangoqwq.com}"
 export AGENT_TOKEN="${AGENT_TOKEN}"
 export AGENT_INCLUDE_MOUNTPOINTS="/"
+export AGENT_FORCE_DISK_TOTAL="${FORCE_DISK_TOTAL}"
 export AGENT_INCLUDE_NICS="eth0"
 export AGENT_DISABLE_WEB_SSH="true"
 export AGENT_DISABLE_AUTO_UPDATE="true"
