@@ -19,7 +19,7 @@ services:
       - key: SSH_PUBKEY
         value: "" # Optional: Paste your ~/.ssh/id_ed25519.pub content here
       - key: ENABLE_EASYTIER
-        value: "false" # Optional: Set to true or define ET_NAME to enable EasyTier
+        value: "" # Optional: Set to true or define ET_NAME to enable EasyTier
       - key: ET_NAME
         value: "" # Optional: e.g. "my-mesh"
       - key: ET_SECRET
@@ -27,8 +27,10 @@ services:
       - key: ET_PEERS
         value: "" # Optional: e.g. "tcp://your-vps.com:11010"
       - key: ENABLE_SINGBOX
-        value: "false" # Optional: Set to true or define SINGBOX_UUID to enable sing-box
+        value: "" # Optional: Set to true or define SINGBOX_UUID to enable sing-box
       - key: SINGBOX_UUID
-        generateValue: true
+        value: "" # Optional: UUID for sing-box VLESS inbound
       - key: KOMARI_TOKEN
         value: "" # Optional: Node token for MangoHub telemetry
+      - key: KOMARI_ENDPOINT
+        value: "" # Optional: e.g. "https://your-dashboard.com"

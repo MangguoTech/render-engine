@@ -13,7 +13,7 @@ RUN apk add --no-cache git ca-certificates && \
 FROM alpine:latest
 
 LABEL maintainer="DevOps Team" \
-      description="EasyTier with SSH, Caddy & Komari-Agent on Render Free Tier"
+      description="Modular Web-Box with persistent web terminal, SSH and on-demand extensions on Render Free Tier"
 
 # Explicit upstream release versions for reproducible builds
 ARG EASYTIER_VERSION="v2.6.4"
@@ -67,9 +67,7 @@ RUN chmod +x /usr/local/bin/komari-agent
 
 # Configure SSH server defaults
 RUN mkdir -p /var/run/sshd /root/.ssh && \
-    chmod 700 /root/.ssh && \
-    # Set default root shell to /bin/bash
-    sed -i -e "s|bin/ash|bin/bash|g" /etc/passwd
+    chmod 700 /root/.ssh
 
 # Copy configuration files and entrypoint
 COPY Caddyfile /etc/caddy/Caddyfile

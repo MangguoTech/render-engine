@@ -38,7 +38,7 @@ ssh-keygen -A >/dev/null 2>&1 || true
 mkdir -p /var/run/sshd /root/.ssh
 chmod 700 /root/.ssh
 
-# Configure sshd_config
+# Configure sshd_config with modern OpenSSH directives
 cat > /etc/ssh/sshd_config << 'EOF'
 Port 22
 Port 2222
@@ -47,11 +47,11 @@ PermitRootLogin yes
 PasswordAuthentication yes
 PubkeyAuthentication yes
 AuthorizedKeysFile .ssh/authorized_keys
-ChallengeResponseAuthentication no
+KbdInteractiveAuthentication no
 X11Forwarding no
 PrintMotd no
 AcceptEnv LANG LC_*
-Subsystem sftp /usr/lib/ssh/sftp-server
+Subsystem sftp internal-sftp
 ClientAliveInterval 30
 ClientAliveCountMax 3
 EOF
@@ -82,9 +82,8 @@ chsh -s /bin/bash root >/dev/null 2>&1 || true
 # ------------------------------------------------------------------------------
 
 # Feature 1: EasyTier User-Space Mesh Network
-if [ "${ENABLE_EASYTIER:-}" = "false" ]; then
-    ENABLE_EASYTIER="false"
-elif [ "${ENABLE_EASYTIER:-}" = "true" ] || [ -n "${ET_NAME:-}" ] || [ -n "${ET_PEERS:-}" ]; then
+# Explicit credentials or flag take precedence
+if [ -n "${ET_NAME:-}" ] || [ -n "${ET_PEERS:-}" ] || [ "${ENABLE_EASYTIER:-}" = "true" ]; then
     ENABLE_EASYTIER="true"
 else
     ENABLE_EASYTIER="false"
@@ -141,9 +140,7 @@ else
 fi
 
 # Feature 2: sing-box Proxy
-if [ "${ENABLE_SINGBOX:-}" = "false" ]; then
-    ENABLE_SINGBOX="false"
-elif [ "${ENABLE_SINGBOX:-}" = "true" ] || [ -n "${SINGBOX_UUID:-}" ]; then
+if [ -n "${SINGBOX_UUID:-}" ] || [ "${ENABLE_SINGBOX:-}" = "true" ]; then
     ENABLE_SINGBOX="true"
 else
     ENABLE_SINGBOX="false"
@@ -152,7 +149,7 @@ fi
 if [ "$ENABLE_SINGBOX" = "true" ]; then
     log "sing-box proxy is ENABLED. Preparing configuration..."
     SINGBOX_UUID="${SINGBOX_UUID:-1da2cc31-2c34-4b0b-b83c-ce3f7b8e6c2c}"
-    mkdir -p /etc/sing-box /var/log/sing-box
+    mkdir -p /etc/sing-box
     cat > /etc/sing-box/config.json << EOF
 {
   "log": {
@@ -200,23 +197,22 @@ else
 fi
 
 # Feature 3: Komari Monitoring Telemetry Agent
-if [ "${ENABLE_KOMARI:-}" = "false" ]; then
-    ENABLE_KOMARI="false"
-elif [ "${ENABLE_KOMARI:-}" = "true" ] || [ -n "${KOMARI_TOKEN:-}" ] || [ -n "${AGENT_TOKEN:-}" ]; then
-    ENABLE_KOMARI="true"
-else
-    ENABLE_KOMARI="false"
-fi
-
-if [ "$ENABLE_KOMARI" = "true" ]; then
-    AGENT_TOKEN="${KOMARI_TOKEN:-${AGENT_TOKEN:-}}"
-    if [ -n "$AGENT_TOKEN" ]; then
-        log "Komari monitoring agent is ENABLED."
+# Requires both token and an explicit endpoint to prevent accidental telemetry leakage
+ENABLE_KOMARI="false"
+if [ -n "${KOMARI_TOKEN:-}" ] || [ -n "${AGENT_TOKEN:-}" ] || [ "${ENABLE_KOMARI:-}" = "true" ]; then
+    RESOLVED_TOKEN="${KOMARI_TOKEN:-${AGENT_TOKEN:-}}"
+    if [ -z "$RESOLVED_TOKEN" ]; then
+        warn "ENABLE_KOMARI requested but neither KOMARI_TOKEN nor AGENT_TOKEN is provided; skipping."
+    elif [ -z "${KOMARI_ENDPOINT:-}" ]; then
+        warn "KOMARI_TOKEN provided but KOMARI_ENDPOINT is missing; skipping to prevent unauthorized telemetry routing."
+    else
+        ENABLE_KOMARI="true"
+        log "Komari monitoring agent is ENABLED (Endpoint: ${KOMARI_ENDPOINT})."
         DEFAULT_KOMARI_FORCE_DISK_TOTAL="5368709120"
         FORCE_DISK_TOTAL="${KOMARI_FORCE_DISK_TOTAL:-${AGENT_FORCE_DISK_TOTAL:-$DEFAULT_KOMARI_FORCE_DISK_TOTAL}}"
         cat > /etc/komari-agent.env << EOF
-export AGENT_ENDPOINT="${KOMARI_ENDPOINT:-https://vps.mangoqwq.com}"
-export AGENT_TOKEN="${AGENT_TOKEN}"
+export AGENT_ENDPOINT="${KOMARI_ENDPOINT}"
+export AGENT_TOKEN="${RESOLVED_TOKEN}"
 export AGENT_INCLUDE_MOUNTPOINTS="/"
 export AGENT_FORCE_DISK_TOTAL="${FORCE_DISK_TOTAL}"
 export AGENT_INCLUDE_NICS="eth0"
@@ -227,12 +223,11 @@ export AGENT_INTERVAL="3"
 export AGENT_PREFER_IP_VERSION="4"
 EOF
         chmod 600 /etc/komari-agent.env
-    else
-        warn "ENABLE_KOMARI requested but neither KOMARI_TOKEN nor AGENT_TOKEN is present; skipping."
-        ENABLE_KOMARI="false"
     fi
-else
-    log "Komari monitoring agent is DISABLED (activate by providing KOMARI_TOKEN)."
+fi
+
+if [ "$ENABLE_KOMARI" = "false" ]; then
+    log "Komari monitoring agent is DISABLED (activate by providing both KOMARI_TOKEN and KOMARI_ENDPOINT)."
 fi
 
 # ------------------------------------------------------------------------------
@@ -327,14 +322,14 @@ if [ "$ENABLE_EASYTIER" = "true" ] && [ -x /usr/local/bin/easytier-core ]; then
     PID_ET=$!
 fi
 
-# Start sing-box (Optional Extension)
+# Start sing-box (Optional Extension, log streaming)
 if [ "$ENABLE_SINGBOX" = "true" ] && command -v sing-box >/dev/null 2>&1; then
     log "Starting sing-box..."
-    sing-box run -c /etc/sing-box/config.json >/var/log/sing-box/sing-box.log 2>&1 &
+    sing-box run -c /etc/sing-box/config.json &
     PID_SINGBOX=$!
 fi
 
-# Start Komari Agent (Optional Extension)
+# Start Komari Agent (Optional Extension, log streaming)
 if [ "$ENABLE_KOMARI" = "true" ] && [ -x /usr/local/bin/komari-agent ] && [ -f /etc/komari-agent.env ]; then
     log "Starting komari-agent..."
     (
@@ -342,7 +337,7 @@ if [ "$ENABLE_KOMARI" = "true" ] && [ -x /usr/local/bin/komari-agent ] && [ -f /
         . /etc/komari-agent.env
         set +a
         exec /usr/local/bin/komari-agent --prefer-cgroup-limits
-    ) >/var/log/komari-agent.log 2>&1 &
+    ) &
     PID_KOMARI=$!
 fi
 
@@ -362,29 +357,32 @@ else
     log "sing-box Proxy : DISABLED (set ENABLE_SINGBOX=true or SINGBOX_UUID to activate)"
 fi
 if [ "$ENABLE_KOMARI" = "true" ]; then
-    log "Komari Agent   : ENABLED (Reporting to ${KOMARI_ENDPOINT:-https://vps.mangoqwq.com})"
+    log "Komari Agent   : ENABLED (Reporting to ${KOMARI_ENDPOINT})"
 else
-    log "Komari Agent   : DISABLED (set KOMARI_TOKEN to activate)"
+    log "Komari Agent   : DISABLED (set KOMARI_TOKEN and KOMARI_ENDPOINT to activate)"
 fi
 log "=========================================================="
 
 # ------------------------------------------------------------------------------
-# 4. Supervise Processes Loop with Crash-Loop Circuit Breaker
+# 4. Supervise Processes Loop with Crash-Loop Circuit Breaker and Success-Reset
 # ------------------------------------------------------------------------------
 FAIL_COUNT_CADDY=0
 FAIL_COUNT_ET=0
 FAIL_COUNT_SSHD=0
 FAIL_COUNT_TTYD=0
 FAIL_COUNT_SINGBOX=0
+FAIL_COUNT_KOMARI=0
 MAX_FAILURES=5
 
 while true; do
     # Check Caddy (Core)
-    if ! kill -0 "$PID_CADDY" 2>/dev/null; then
+    if kill -0 "$PID_CADDY" 2>/dev/null; then
+        FAIL_COUNT_CADDY=0
+    else
         ((FAIL_COUNT_CADDY++)) || true
         err "Caddy process died! (Failure count: $FAIL_COUNT_CADDY/$MAX_FAILURES)"
         if [ "$FAIL_COUNT_CADDY" -ge "$MAX_FAILURES" ]; then
-            err "Caddy exceeded maximum crash limit. Aborting container to trigger restart."
+            err "Caddy exceeded maximum consecutive crash limit ($MAX_FAILURES). Aborting container."
             exit 1
         fi
         caddy run --config /etc/caddy/Caddyfile --adapter caddyfile &
@@ -392,11 +390,13 @@ while true; do
     fi
 
     # Check SSHD (Core)
-    if ! kill -0 "$PID_SSHD" 2>/dev/null; then
+    if kill -0 "$PID_SSHD" 2>/dev/null; then
+        FAIL_COUNT_SSHD=0
+    else
         ((FAIL_COUNT_SSHD++)) || true
         err "sshd process died! (Failure count: $FAIL_COUNT_SSHD/$MAX_FAILURES)"
         if [ "$FAIL_COUNT_SSHD" -ge "$MAX_FAILURES" ]; then
-            err "sshd exceeded maximum crash limit. Aborting container to trigger restart."
+            err "sshd exceeded maximum consecutive crash limit ($MAX_FAILURES). Aborting container."
             exit 1
         fi
         /usr/sbin/sshd -D -e &
@@ -404,11 +404,13 @@ while true; do
     fi
 
     # Check ttyd (Core)
-    if ! kill -0 "$PID_TTYD" 2>/dev/null; then
+    if kill -0 "$PID_TTYD" 2>/dev/null; then
+        FAIL_COUNT_TTYD=0
+    else
         ((FAIL_COUNT_TTYD++)) || true
         err "ttyd process died! (Failure count: $FAIL_COUNT_TTYD/$MAX_FAILURES)"
         if [ "$FAIL_COUNT_TTYD" -ge "$MAX_FAILURES" ]; then
-            err "ttyd exceeded maximum crash limit. Aborting container to trigger restart."
+            err "ttyd exceeded maximum consecutive crash limit ($MAX_FAILURES). Aborting container."
             exit 1
         fi
         start_ttyd
@@ -417,11 +419,13 @@ while true; do
 
     # Check EasyTier (Only if enabled)
     if [ "$ENABLE_EASYTIER" = "true" ] && [ -n "$PID_ET" ]; then
-        if ! kill -0 "$PID_ET" 2>/dev/null; then
+        if kill -0 "$PID_ET" 2>/dev/null; then
+            FAIL_COUNT_ET=0
+        else
             ((FAIL_COUNT_ET++)) || true
             err "EasyTier core process died! (Failure count: $FAIL_COUNT_ET/$MAX_FAILURES)"
             if [ "$FAIL_COUNT_ET" -ge "$MAX_FAILURES" ]; then
-                err "EasyTier core exceeded maximum crash limit. Aborting container to trigger restart."
+                err "EasyTier core exceeded maximum consecutive crash limit ($MAX_FAILURES). Aborting container."
                 exit 1
             fi
             /usr/local/bin/easytier-core "${ET_ARGS[@]}" &
@@ -431,30 +435,40 @@ while true; do
 
     # Check sing-box (Only if enabled, with circuit breaker)
     if [ "$ENABLE_SINGBOX" = "true" ] && [ -n "$PID_SINGBOX" ]; then
-        if ! kill -0 "$PID_SINGBOX" 2>/dev/null; then
+        if kill -0 "$PID_SINGBOX" 2>/dev/null; then
+            FAIL_COUNT_SINGBOX=0
+        else
             ((FAIL_COUNT_SINGBOX++)) || true
             warn "sing-box process died! (Failure count: $FAIL_COUNT_SINGBOX/$MAX_FAILURES)"
             if [ "$FAIL_COUNT_SINGBOX" -ge "$MAX_FAILURES" ]; then
-                err "sing-box exceeded maximum restart limit ($MAX_FAILURES). Stopping auto-restart."
+                err "sing-box exceeded maximum consecutive restart limit ($MAX_FAILURES). Stopping auto-restart."
                 PID_SINGBOX=""
             else
-                sing-box run -c /etc/sing-box/config.json >>/var/log/sing-box/sing-box.log 2>&1 &
+                sing-box run -c /etc/sing-box/config.json &
                 PID_SINGBOX=$!
             fi
         fi
     fi
 
-    # Check Komari Agent (Only if enabled)
+    # Check Komari Agent (Only if enabled, with circuit breaker)
     if [ "$ENABLE_KOMARI" = "true" ] && [ -n "$PID_KOMARI" ]; then
-        if ! kill -0 "$PID_KOMARI" 2>/dev/null; then
-            warn "komari-agent process died. Restarting..."
-            (
-                set -a
-                . /etc/komari-agent.env
-                set +a
-                exec /usr/local/bin/komari-agent --prefer-cgroup-limits
-            ) >>/var/log/komari-agent.log 2>&1 &
-            PID_KOMARI=$!
+        if kill -0 "$PID_KOMARI" 2>/dev/null; then
+            FAIL_COUNT_KOMARI=0
+        else
+            ((FAIL_COUNT_KOMARI++)) || true
+            warn "komari-agent process died! (Failure count: $FAIL_COUNT_KOMARI/$MAX_FAILURES)"
+            if [ "$FAIL_COUNT_KOMARI" -ge "$MAX_FAILURES" ]; then
+                err "komari-agent exceeded maximum consecutive restart limit ($MAX_FAILURES). Stopping auto-restart."
+                PID_KOMARI=""
+            else
+                (
+                    set -a
+                    . /etc/komari-agent.env
+                    set +a
+                    exec /usr/local/bin/komari-agent --prefer-cgroup-limits
+                ) &
+                PID_KOMARI=$!
+            fi
         fi
     fi
 
