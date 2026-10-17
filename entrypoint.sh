@@ -156,12 +156,25 @@ ET_ARGS+=(--console-log-level "${ET_LOG_LEVEL:-info}")
 # ------------------------------------------------------------------------------
 # 3. Process Management & Background Services
 # ------------------------------------------------------------------------------
-PIDS=()
+PID_SSHD=""
+PID_ET=""
+PID_TTYD=""
+PID_CADDY=""
+PID_KOMARI=""
+PID_SINGBOX=""
 
 cleanup() {
-    log "Received shutdown signal. Stopping all background processes..."
-    for pid in "${PIDS[@]}"; do
-        if kill -0 "$pid" 2>/dev/null; then
+    log "Received shutdown signal. Stopping all background processes gracefully..."
+
+    # 1. Gracefully terminate tmux server and any active web terminal child tasks
+    if command -v tmux >/dev/null 2>&1; then
+        tmux kill-server 2>/dev/null || true
+    fi
+
+    # 2. Terminate all active managed service daemons
+    local active_pids=("${PID_CADDY:-}" "${PID_ET:-}" "${PID_SSHD:-}" "${PID_TTYD:-}" "${PID_KOMARI:-}" "${PID_SINGBOX:-}")
+    for pid in "${active_pids[@]}"; do
+        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
             kill -TERM "$pid" 2>/dev/null || true
         fi
     done
@@ -180,6 +193,9 @@ set -g history-limit 50000
 set -g window-size latest
 setw -g aggressive-resize on
 set -s escape-time 0
+set -g status-style "bg=#2d3748,fg=#f7fafc"
+set -g status-left "[#S] "
+set -g status-right "%H:%M %d-%b"
 EOF
 
 cat > /usr/local/bin/ttyd-session << 'EOF'
@@ -193,13 +209,11 @@ chmod +x /usr/local/bin/ttyd-session
 log "Starting sshd on ports 22 and 2222..."
 /usr/sbin/sshd -D -e &
 PID_SSHD=$!
-PIDS+=("$PID_SSHD")
 
 # Start EasyTier Core
 log "Starting easytier-core..."
 /usr/local/bin/easytier-core "${ET_ARGS[@]}" &
 PID_ET=$!
-PIDS+=("$PID_ET")
 
 # Start ttyd (Emergency web terminal with tmux session persistence & ping keepalive)
 TTYD_USER="${TTYD_USER:-admin}"
@@ -221,7 +235,6 @@ start_ttyd() {
 log "Starting ttyd on 127.0.0.1:7681 (/shell) with Basic Auth and tmux persistence..."
 start_ttyd
 PID_TTYD=$!
-PIDS+=("$PID_TTYD")
 
 # Start Caddy Reverse Proxy
 PORT="${PORT:-10000}"
@@ -229,7 +242,6 @@ export PORT
 log "Starting Caddy on port $PORT..."
 caddy run --config /etc/caddy/Caddyfile --adapter caddyfile &
 PID_CADDY=$!
-PIDS+=("$PID_CADDY")
 
 # Start Komari Agent (if binary exists and env configured)
 PID_KOMARI=""
@@ -268,7 +280,6 @@ if [ -x /usr/local/bin/komari-agent ] && [ -f /etc/komari-agent.env ]; then
         exec /usr/local/bin/komari-agent --prefer-cgroup-limits
     ) >/var/log/komari-agent.log 2>&1 &
     PID_KOMARI=$!
-    PIDS+=("$PID_KOMARI")
     log "komari-agent started (PID $PID_KOMARI)."
 else
     log "komari-agent binary or /etc/komari-agent.env not present; skipping."
@@ -327,7 +338,6 @@ if command -v sing-box >/dev/null 2>&1; then
     log "Starting sing-box..."
     sing-box run -c /etc/sing-box/config.json >/var/log/sing-box/sing-box.log 2>&1 &
     PID_SINGBOX=$!
-    PIDS+=("$PID_SINGBOX")
     log "sing-box started (PID $PID_SINGBOX, mixed 0.0.0.0:10808, vless-ws 127.0.0.1:20808)."
 else
     log "sing-box binary not found in PATH; skipping."
@@ -361,7 +371,6 @@ while true; do
         fi
         caddy run --config /etc/caddy/Caddyfile --adapter caddyfile &
         PID_CADDY=$!
-        PIDS+=("$PID_CADDY")
     fi
 
     # Check EasyTier
@@ -374,7 +383,6 @@ while true; do
         fi
         /usr/local/bin/easytier-core "${ET_ARGS[@]}" &
         PID_ET=$!
-        PIDS+=("$PID_ET")
     fi
 
     # Check SSHD
@@ -387,7 +395,6 @@ while true; do
         fi
         /usr/sbin/sshd -D -e &
         PID_SSHD=$!
-        PIDS+=("$PID_SSHD")
     fi
 
     # Check ttyd
@@ -400,7 +407,6 @@ while true; do
         fi
         start_ttyd
         PID_TTYD=$!
-        PIDS+=("$PID_TTYD")
     fi
 
     # Check Komari Agent
@@ -414,7 +420,6 @@ while true; do
                 exec /usr/local/bin/komari-agent --prefer-cgroup-limits
             ) >>/var/log/komari-agent.log 2>&1 &
             PID_KOMARI=$!
-            PIDS+=("$PID_KOMARI")
         fi
     fi
 
@@ -429,7 +434,6 @@ while true; do
             else
                 sing-box run -c /etc/sing-box/config.json >>/var/log/sing-box/sing-box.log 2>&1 &
                 PID_SINGBOX=$!
-                PIDS+=("$PID_SINGBOX")
             fi
         fi
     fi
