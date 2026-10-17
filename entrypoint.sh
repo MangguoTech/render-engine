@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# Entrypoint for EasyTier + SSH + Caddy on Render Container (No-TUN Smoltcp)
+# Entrypoint for render-engine on Render Container
+# Modular Architecture: Minimal Zero-Config Base with On-Demand Extension
 # Production-Hardened Edition
 # ==============================================================================
 set -Eeuo pipefail
@@ -22,7 +23,7 @@ generate_secure_secret() {
 }
 
 log "=========================================================="
-log "Starting EasyTier Render Container Initialization..."
+log "Starting render-engine Container Initialization..."
 log "=========================================================="
 
 # ------------------------------------------------------------------------------
@@ -47,7 +48,6 @@ PasswordAuthentication yes
 PubkeyAuthentication yes
 AuthorizedKeysFile .ssh/authorized_keys
 ChallengeResponseAuthentication no
-# UsePAM no (Alpine OpenSSH has no PAM support)
 X11Forwarding no
 PrintMotd no
 AcceptEnv LANG LC_*
@@ -63,95 +63,177 @@ if [ -n "${SSH_PASS:-}" ]; then
 else
     RANDOM_PASS=$(generate_secure_secret)
     echo "root:${RANDOM_PASS}" | chpasswd
-    warn "SSH_PASS not provided! Generated random secure root password: ${RANDOM_PASS}"
+    warn "SSH_PASS not provided. Generated random root password: ${RANDOM_PASS}"
     SSH_PASS="$RANDOM_PASS"
 fi
 
-# Setup SSH Public Key
-DEFAULT_SSH_PUBKEY="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMQTME8tnsRLdvdTA/BHvjBYv0un5Ih7lKgRz+voFVUx render-pxed-mesh"
+# Setup SSH Public Key if provided
 if [ -n "${SSH_PUBKEY:-}" ]; then
     echo "${SSH_PUBKEY}" > /root/.ssh/authorized_keys
     chmod 600 /root/.ssh/authorized_keys
     log "SSH public key installed to /root/.ssh/authorized_keys."
-elif [ -n "${DEFAULT_SSH_PUBKEY}" ]; then
-    echo "${DEFAULT_SSH_PUBKEY}" > /root/.ssh/authorized_keys
-    chmod 600 /root/.ssh/authorized_keys
-    log "Default pxed SSH public key installed to /root/.ssh/authorized_keys."
 fi
 
 # Ensure root shell is bash
 chsh -s /bin/bash root >/dev/null 2>&1 || true
 
 # ------------------------------------------------------------------------------
-# 2. EasyTier CLI Arguments Preparation
+# 2. On-Demand Feature Flags & Arguments Preparation
 # ------------------------------------------------------------------------------
-log "Preparing EasyTier arguments..."
+
+# Feature 1: EasyTier User-Space Mesh Network
+if [ "${ENABLE_EASYTIER:-}" = "false" ]; then
+    ENABLE_EASYTIER="false"
+elif [ "${ENABLE_EASYTIER:-}" = "true" ] || [ -n "${ET_NAME:-}" ] || [ -n "${ET_PEERS:-}" ]; then
+    ENABLE_EASYTIER="true"
+else
+    ENABLE_EASYTIER="false"
+fi
 
 ET_ARGS=()
+if [ "$ENABLE_EASYTIER" = "true" ]; then
+    log "EasyTier mesh network is ENABLED. Preparing arguments..."
+    ET_NAME="${ET_NAME:-render-mesh}"
+    ET_SECRET="${ET_SECRET:-render-mesh-secret}"
+    ET_ARGS+=(--network-name "$ET_NAME")
+    ET_ARGS+=(--network-secret "$ET_SECRET")
 
-# Basic network identity
-if [ -z "${ET_NAME:-}" ]; then
-    ET_NAME="mango-mesh"
-fi
-if [ -z "${ET_SECRET:-}" ]; then
-    ET_SECRET="M4ngo#Mesh_SecKey@2026"
-fi
+    # IP configuration
+    if [ -n "${ET_IP:-}" ]; then
+        ET_ARGS+=(-i "$ET_IP")
+        log "EasyTier static IP: $ET_IP"
+    elif [ "${ET_DHCP:-false}" = "true" ]; then
+        ET_ARGS+=(-d)
+        log "EasyTier DHCP mode enabled."
+    else
+        DEFAULT_IP="10.144.144.90"
+        ET_ARGS+=(-i "$DEFAULT_IP")
+        log "EasyTier IP not set; using default: $DEFAULT_IP"
+    fi
 
-ET_ARGS+=(--network-name "$ET_NAME")
-ET_ARGS+=(--network-secret "$ET_SECRET")
+    # Local WebSocket listener for Caddy reverse proxy
+    ET_ARGS+=(-l "ws://127.0.0.1:11010")
 
-# IP configuration
-if [ -n "${ET_IP:-}" ]; then
-    ET_ARGS+=(-i "$ET_IP")
-    log "EasyTier static IP: $ET_IP"
-elif [ "${ET_DHCP:-false}" = "true" ]; then
-    ET_ARGS+=(-d)
-    log "EasyTier DHCP mode enabled."
+    # Render container has no /dev/net/tun or CAP_NET_ADMIN
+    ET_ARGS+=(--no-tun)
+    ET_ARGS+=(--use-smoltcp)
+    ET_ARGS+=(--tcp-whitelist 22 2222 10808)
+
+    # Hostname
+    ET_ARGS+=(--hostname "${ET_HOSTNAME:-render-box}")
+
+    # Peer connections
+    if [ -n "${ET_PEERS:-}" ]; then
+        IFS=', ' read -r -a PEER_ARRAY <<< "$ET_PEERS"
+        for peer in "${PEER_ARRAY[@]}"; do
+            if [ -n "$peer" ]; then
+                ET_ARGS+=(-p "$peer")
+                log "Configured EasyTier peer: $peer"
+            fi
+        done
+    else
+        log "No external ET_PEERS defined. Container will wait passively on ws://127.0.0.1:11010"
+    fi
+
+    ET_ARGS+=(--console-log-level "${ET_LOG_LEVEL:-info}")
 else
-    DEFAULT_IP="10.144.144.90"
-    ET_ARGS+=(-i "$DEFAULT_IP")
-    log "EasyTier IP not set; using default: $DEFAULT_IP"
+    log "EasyTier mesh network is DISABLED (activate by defining ET_NAME or setting ENABLE_EASYTIER=true)."
 fi
 
-# Always listen on local ws port for Caddy reverse proxy
-ET_ARGS+=(-l "ws://127.0.0.1:11010")
-
-# Critical: Render container has no /dev/net/tun or CAP_NET_ADMIN
-# EasyTier smoltcp user-space TCP/IP stack will handle incoming L3/L4 traffic
-ET_ARGS+=(--no-tun)
-ET_ARGS+=(--use-smoltcp)
-
-# Ports to expose over virtual IP smoltcp network (SSH and backup port, sing-box mixed proxy)
-ET_ARGS+=(--tcp-whitelist 22 2222 10808)
-
-# Optional hostname
-if [ -n "${ET_HOSTNAME:-}" ]; then
-    ET_ARGS+=(--hostname "$ET_HOSTNAME")
+# Feature 2: sing-box Proxy
+if [ "${ENABLE_SINGBOX:-}" = "false" ]; then
+    ENABLE_SINGBOX="false"
+elif [ "${ENABLE_SINGBOX:-}" = "true" ] || [ -n "${SINGBOX_UUID:-}" ]; then
+    ENABLE_SINGBOX="true"
 else
-    ET_ARGS+=(--hostname "render-box")
+    ENABLE_SINGBOX="false"
 fi
 
-# Default peers if ET_PEERS is not provided
-DEFAULT_PEERS="tcp://212.64.10.215:11010,tcp://104.208.65.233:11010"
-if [ -z "${ET_PEERS:-}" ]; then
-    ET_PEERS="$DEFAULT_PEERS"
-fi
-
-# Peer connections (ET_PEERS can be space or comma separated)
-if [ -n "${ET_PEERS:-}" ]; then
-    IFS=', ' read -r -a PEER_ARRAY <<< "$ET_PEERS"
-    for peer in "${PEER_ARRAY[@]}"; do
-        if [ -n "$peer" ]; then
-            ET_ARGS+=(-p "$peer")
-            log "Configured EasyTier peer: $peer"
-        fi
-    done
+if [ "$ENABLE_SINGBOX" = "true" ]; then
+    log "sing-box proxy is ENABLED. Preparing configuration..."
+    SINGBOX_UUID="${SINGBOX_UUID:-1da2cc31-2c34-4b0b-b83c-ce3f7b8e6c2c}"
+    mkdir -p /etc/sing-box /var/log/sing-box
+    cat > /etc/sing-box/config.json << EOF
+{
+  "log": {
+    "level": "info",
+    "timestamp": true
+  },
+  "inbounds": [
+    {
+      "type": "mixed",
+      "tag": "mixed-in",
+      "listen": "0.0.0.0",
+      "listen_port": 10808
+    },
+    {
+      "type": "vless",
+      "tag": "vless-in",
+      "listen": "127.0.0.1",
+      "listen_port": 20808,
+      "users": [
+        {
+          "uuid": "${SINGBOX_UUID}"
+        }
+      ],
+      "transport": {
+        "type": "ws",
+        "path": "/vless-ws",
+        "max_early_data": 2048,
+        "early_data_header_name": "Sec-WebSocket-Protocol"
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "direct",
+      "tag": "direct"
+    }
+  ],
+  "route": {
+    "auto_detect_interface": true
+  }
+}
+EOF
 else
-    log "No external ET_PEERS defined. Container will wait passively on ws://127.0.0.1:11010"
+    log "sing-box proxy is DISABLED (activate by defining SINGBOX_UUID or setting ENABLE_SINGBOX=true)."
 fi
 
-# Console log level
-ET_ARGS+=(--console-log-level "${ET_LOG_LEVEL:-info}")
+# Feature 3: Komari Monitoring Telemetry Agent
+if [ "${ENABLE_KOMARI:-}" = "false" ]; then
+    ENABLE_KOMARI="false"
+elif [ "${ENABLE_KOMARI:-}" = "true" ] || [ -n "${KOMARI_TOKEN:-}" ] || [ -n "${AGENT_TOKEN:-}" ]; then
+    ENABLE_KOMARI="true"
+else
+    ENABLE_KOMARI="false"
+fi
+
+if [ "$ENABLE_KOMARI" = "true" ]; then
+    AGENT_TOKEN="${KOMARI_TOKEN:-${AGENT_TOKEN:-}}"
+    if [ -n "$AGENT_TOKEN" ]; then
+        log "Komari monitoring agent is ENABLED."
+        DEFAULT_KOMARI_FORCE_DISK_TOTAL="5368709120"
+        FORCE_DISK_TOTAL="${KOMARI_FORCE_DISK_TOTAL:-${AGENT_FORCE_DISK_TOTAL:-$DEFAULT_KOMARI_FORCE_DISK_TOTAL}}"
+        cat > /etc/komari-agent.env << EOF
+export AGENT_ENDPOINT="${KOMARI_ENDPOINT:-https://vps.mangoqwq.com}"
+export AGENT_TOKEN="${AGENT_TOKEN}"
+export AGENT_INCLUDE_MOUNTPOINTS="/"
+export AGENT_FORCE_DISK_TOTAL="${FORCE_DISK_TOTAL}"
+export AGENT_INCLUDE_NICS="eth0"
+export AGENT_DISABLE_WEB_SSH="true"
+export AGENT_DISABLE_AUTO_UPDATE="true"
+export AGENT_MONTH_ROTATE="1"
+export AGENT_INTERVAL="3"
+export AGENT_PREFER_IP_VERSION="4"
+EOF
+        chmod 600 /etc/komari-agent.env
+    else
+        warn "ENABLE_KOMARI requested but neither KOMARI_TOKEN nor AGENT_TOKEN is present; skipping."
+        ENABLE_KOMARI="false"
+    fi
+else
+    log "Komari monitoring agent is DISABLED (activate by providing KOMARI_TOKEN)."
+fi
 
 # ------------------------------------------------------------------------------
 # 3. Process Management & Background Services
@@ -205,17 +287,12 @@ exec tmux -f /root/.tmux.conf new-session -A -s main /bin/bash
 EOF
 chmod +x /usr/local/bin/ttyd-session
 
-# Start SSH daemon
+# Start SSH daemon (Core Service)
 log "Starting sshd on ports 22 and 2222..."
 /usr/sbin/sshd -D -e &
 PID_SSHD=$!
 
-# Start EasyTier Core
-log "Starting easytier-core..."
-/usr/local/bin/easytier-core "${ET_ARGS[@]}" &
-PID_ET=$!
-
-# Start ttyd (Emergency web terminal with tmux session persistence & ping keepalive)
+# Start ttyd (Core Service: Web terminal with tmux session persistence & ping keepalive)
 TTYD_USER="${TTYD_USER:-admin}"
 TTYD_PASS="${TTYD_PASS:-$SSH_PASS}"
 
@@ -236,42 +313,29 @@ log "Starting ttyd on 127.0.0.1:7681 (/shell) with Basic Auth and tmux persisten
 start_ttyd
 PID_TTYD=$!
 
-# Start Caddy Reverse Proxy
+# Start Caddy Reverse Proxy (Core Service)
 PORT="${PORT:-10000}"
 export PORT
-log "Starting Caddy on port $PORT..."
+log "Starting Caddy multiplexer on port $PORT..."
 caddy run --config /etc/caddy/Caddyfile --adapter caddyfile &
 PID_CADDY=$!
 
-# Start Komari Agent (if binary exists and env configured)
-PID_KOMARI=""
-DEFAULT_KOMARI_TOKEN="3WU9ZdCTvrDeUW8wIkYdWA"
-DEFAULT_KOMARI_FORCE_DISK_TOTAL="5368709120"
-FORCE_DISK_TOTAL="${KOMARI_FORCE_DISK_TOTAL:-${AGENT_FORCE_DISK_TOTAL:-$DEFAULT_KOMARI_FORCE_DISK_TOTAL}}"
-
-if [ -n "${KOMARI_TOKEN:-}" ]; then
-    AGENT_TOKEN="${KOMARI_TOKEN}"
-elif [ -z "${AGENT_TOKEN:-}" ] && [ -n "${DEFAULT_KOMARI_TOKEN}" ]; then
-    AGENT_TOKEN="${DEFAULT_KOMARI_TOKEN}"
+# Start EasyTier (Optional Extension)
+if [ "$ENABLE_EASYTIER" = "true" ] && [ -x /usr/local/bin/easytier-core ]; then
+    log "Starting easytier-core..."
+    /usr/local/bin/easytier-core "${ET_ARGS[@]}" &
+    PID_ET=$!
 fi
 
-if [ -n "${AGENT_TOKEN:-}" ]; then
-    cat > /etc/komari-agent.env << EOF
-export AGENT_ENDPOINT="${KOMARI_ENDPOINT:-https://vps.mangoqwq.com}"
-export AGENT_TOKEN="${AGENT_TOKEN}"
-export AGENT_INCLUDE_MOUNTPOINTS="/"
-export AGENT_FORCE_DISK_TOTAL="${FORCE_DISK_TOTAL}"
-export AGENT_INCLUDE_NICS="eth0"
-export AGENT_DISABLE_WEB_SSH="true"
-export AGENT_DISABLE_AUTO_UPDATE="true"
-export AGENT_MONTH_ROTATE="1"
-export AGENT_INTERVAL="3"
-export AGENT_PREFER_IP_VERSION="4"
-EOF
-    chmod 600 /etc/komari-agent.env
+# Start sing-box (Optional Extension)
+if [ "$ENABLE_SINGBOX" = "true" ] && command -v sing-box >/dev/null 2>&1; then
+    log "Starting sing-box..."
+    sing-box run -c /etc/sing-box/config.json >/var/log/sing-box/sing-box.log 2>&1 &
+    PID_SINGBOX=$!
 fi
 
-if [ -x /usr/local/bin/komari-agent ] && [ -f /etc/komari-agent.env ]; then
+# Start Komari Agent (Optional Extension)
+if [ "$ENABLE_KOMARI" = "true" ] && [ -x /usr/local/bin/komari-agent ] && [ -f /etc/komari-agent.env ]; then
     log "Starting komari-agent..."
     (
         set -a
@@ -280,75 +344,29 @@ if [ -x /usr/local/bin/komari-agent ] && [ -f /etc/komari-agent.env ]; then
         exec /usr/local/bin/komari-agent --prefer-cgroup-limits
     ) >/var/log/komari-agent.log 2>&1 &
     PID_KOMARI=$!
-    log "komari-agent started (PID $PID_KOMARI)."
+fi
+
+log "=========================================================="
+log "render-engine is ready!"
+log "=========================================================="
+log "Web Terminal   : https://<render-host>/shell/ (User: ${TTYD_USER}, Pass: ${TTYD_PASS})"
+log "Health Probe   : https://<render-host>/health"
+if [ "$ENABLE_EASYTIER" = "true" ]; then
+    log "EasyTier Mesh  : ENABLED (Network: ${ET_NAME}, Hostname: ${ET_HOSTNAME:-render-box})"
 else
-    log "komari-agent binary or /etc/komari-agent.env not present; skipping."
+    log "EasyTier Mesh  : DISABLED (set ENABLE_EASYTIER=true or ET_NAME to activate)"
 fi
-
-# Start sing-box (Dual inbound: mixed on 10808 for mesh, vless-ws on 20808 for Caddy)
-PID_SINGBOX=""
-SINGBOX_UUID="${SINGBOX_UUID:-1da2cc31-2c34-4b0b-b83c-ce3f7b8e6c2c}"
-mkdir -p /etc/sing-box /var/log/sing-box
-if [ ! -f /etc/sing-box/config.json ]; then
-    cat > /etc/sing-box/config.json << EOF
-{
-  "log": {
-    "level": "info",
-    "timestamp": true
-  },
-  "inbounds": [
-    {
-      "type": "mixed",
-      "tag": "mixed-in",
-      "listen": "0.0.0.0",
-      "listen_port": 10808
-    },
-    {
-      "type": "vless",
-      "tag": "vless-in",
-      "listen": "127.0.0.1",
-      "listen_port": 20808,
-      "users": [
-        {
-          "uuid": "${SINGBOX_UUID}"
-        }
-      ],
-      "transport": {
-        "type": "ws",
-        "path": "/vless-ws",
-        "max_early_data": 2048,
-        "early_data_header_name": "Sec-WebSocket-Protocol"
-      }
-    }
-  ],
-  "outbounds": [
-    {
-      "type": "direct",
-      "tag": "direct"
-    }
-  ],
-  "route": {
-    "auto_detect_interface": true
-  }
-}
-EOF
-fi
-
-if command -v sing-box >/dev/null 2>&1; then
-    log "Starting sing-box..."
-    sing-box run -c /etc/sing-box/config.json >/var/log/sing-box/sing-box.log 2>&1 &
-    PID_SINGBOX=$!
-    log "sing-box started (PID $PID_SINGBOX, mixed 0.0.0.0:10808, vless-ws 127.0.0.1:20808)."
+if [ "$ENABLE_SINGBOX" = "true" ]; then
+    log "sing-box Proxy : ENABLED (vless-ws: /vless-ws, mixed: 10808)"
 else
-    log "sing-box binary not found in PATH; skipping."
+    log "sing-box Proxy : DISABLED (set ENABLE_SINGBOX=true or SINGBOX_UUID to activate)"
 fi
-
-log "All services initiated successfully."
-log "Caddy: :$PORT (/health, /et, /shell, /vless-ws)"
-log "EasyTier: ws://127.0.0.1:11010"
-log "SSHD: 127.0.0.1:22 and 127.0.0.1:2222"
-log "ttyd: 127.0.0.1:7681 (/shell)"
-log "sing-box: 0.0.0.0:10808 (mixed), 127.0.0.1:20808 (vless-ws)"
+if [ "$ENABLE_KOMARI" = "true" ]; then
+    log "Komari Agent   : ENABLED (Reporting to ${KOMARI_ENDPOINT:-https://vps.mangoqwq.com})"
+else
+    log "Komari Agent   : DISABLED (set KOMARI_TOKEN to activate)"
+fi
+log "=========================================================="
 
 # ------------------------------------------------------------------------------
 # 4. Supervise Processes Loop with Crash-Loop Circuit Breaker
@@ -361,7 +379,7 @@ FAIL_COUNT_SINGBOX=0
 MAX_FAILURES=5
 
 while true; do
-    # Check Caddy
+    # Check Caddy (Core)
     if ! kill -0 "$PID_CADDY" 2>/dev/null; then
         ((FAIL_COUNT_CADDY++)) || true
         err "Caddy process died! (Failure count: $FAIL_COUNT_CADDY/$MAX_FAILURES)"
@@ -373,19 +391,7 @@ while true; do
         PID_CADDY=$!
     fi
 
-    # Check EasyTier
-    if ! kill -0 "$PID_ET" 2>/dev/null; then
-        ((FAIL_COUNT_ET++)) || true
-        err "EasyTier core process died! (Failure count: $FAIL_COUNT_ET/$MAX_FAILURES)"
-        if [ "$FAIL_COUNT_ET" -ge "$MAX_FAILURES" ]; then
-            err "EasyTier core exceeded maximum crash limit. Aborting container to trigger restart."
-            exit 1
-        fi
-        /usr/local/bin/easytier-core "${ET_ARGS[@]}" &
-        PID_ET=$!
-    fi
-
-    # Check SSHD
+    # Check SSHD (Core)
     if ! kill -0 "$PID_SSHD" 2>/dev/null; then
         ((FAIL_COUNT_SSHD++)) || true
         err "sshd process died! (Failure count: $FAIL_COUNT_SSHD/$MAX_FAILURES)"
@@ -397,7 +403,7 @@ while true; do
         PID_SSHD=$!
     fi
 
-    # Check ttyd
+    # Check ttyd (Core)
     if ! kill -0 "$PID_TTYD" 2>/dev/null; then
         ((FAIL_COUNT_TTYD++)) || true
         err "ttyd process died! (Failure count: $FAIL_COUNT_TTYD/$MAX_FAILURES)"
@@ -409,9 +415,38 @@ while true; do
         PID_TTYD=$!
     fi
 
-    # Check Komari Agent
-    if [ -x /usr/local/bin/komari-agent ] && [ -f /etc/komari-agent.env ]; then
-        if [ -n "$PID_KOMARI" ] && ! kill -0 "$PID_KOMARI" 2>/dev/null; then
+    # Check EasyTier (Only if enabled)
+    if [ "$ENABLE_EASYTIER" = "true" ] && [ -n "$PID_ET" ]; then
+        if ! kill -0 "$PID_ET" 2>/dev/null; then
+            ((FAIL_COUNT_ET++)) || true
+            err "EasyTier core process died! (Failure count: $FAIL_COUNT_ET/$MAX_FAILURES)"
+            if [ "$FAIL_COUNT_ET" -ge "$MAX_FAILURES" ]; then
+                err "EasyTier core exceeded maximum crash limit. Aborting container to trigger restart."
+                exit 1
+            fi
+            /usr/local/bin/easytier-core "${ET_ARGS[@]}" &
+            PID_ET=$!
+        fi
+    fi
+
+    # Check sing-box (Only if enabled, with circuit breaker)
+    if [ "$ENABLE_SINGBOX" = "true" ] && [ -n "$PID_SINGBOX" ]; then
+        if ! kill -0 "$PID_SINGBOX" 2>/dev/null; then
+            ((FAIL_COUNT_SINGBOX++)) || true
+            warn "sing-box process died! (Failure count: $FAIL_COUNT_SINGBOX/$MAX_FAILURES)"
+            if [ "$FAIL_COUNT_SINGBOX" -ge "$MAX_FAILURES" ]; then
+                err "sing-box exceeded maximum restart limit ($MAX_FAILURES). Stopping auto-restart."
+                PID_SINGBOX=""
+            else
+                sing-box run -c /etc/sing-box/config.json >>/var/log/sing-box/sing-box.log 2>&1 &
+                PID_SINGBOX=$!
+            fi
+        fi
+    fi
+
+    # Check Komari Agent (Only if enabled)
+    if [ "$ENABLE_KOMARI" = "true" ] && [ -n "$PID_KOMARI" ]; then
+        if ! kill -0 "$PID_KOMARI" 2>/dev/null; then
             warn "komari-agent process died. Restarting..."
             (
                 set -a
@@ -420,21 +455,6 @@ while true; do
                 exec /usr/local/bin/komari-agent --prefer-cgroup-limits
             ) >>/var/log/komari-agent.log 2>&1 &
             PID_KOMARI=$!
-        fi
-    fi
-
-    # Check sing-box with Circuit Breaker
-    if command -v sing-box >/dev/null 2>&1 && [ -f /etc/sing-box/config.json ]; then
-        if [ -n "$PID_SINGBOX" ] && ! kill -0 "$PID_SINGBOX" 2>/dev/null; then
-            ((FAIL_COUNT_SINGBOX++)) || true
-            warn "sing-box process died! (Failure count: $FAIL_COUNT_SINGBOX/$MAX_FAILURES)"
-            if [ "$FAIL_COUNT_SINGBOX" -ge "$MAX_FAILURES" ]; then
-                err "sing-box exceeded maximum restart limit ($MAX_FAILURES). Stopping auto-restart to prevent log flooding."
-                PID_SINGBOX=""
-            else
-                sing-box run -c /etc/sing-box/config.json >>/var/log/sing-box/sing-box.log 2>&1 &
-                PID_SINGBOX=$!
-            fi
         fi
     fi
 

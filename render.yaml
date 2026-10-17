@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: easytier-mesh
+    name: render-engine
     env: docker
     plan: free
     region: oregon # or singapore / frankfurt
@@ -10,23 +10,25 @@ services:
     envVars:
       - key: PORT
         value: 10000
-      - key: ET_NAME
-        value: render-mesh
-      - key: ET_SECRET
-        generateValue: true
-      - key: ET_IP
-        value: 10.144.144.10
-      - key: ET_HOSTNAME
-        value: render-box
-      - key: ET_PEERS
-        value: "" # Optional: e.g. "tcp://your-vps.com:11010"
       - key: SSH_PASS
         generateValue: true
-      - key: SSH_PUBKEY
-        value: "" # Optional: Paste your ~/.ssh/id_ed25519.pub content here
       - key: TTYD_USER
         value: admin
       - key: TTYD_PASS
         generateValue: true
-      - key: ET_LOG_LEVEL
-        value: info
+      - key: SSH_PUBKEY
+        value: "" # Optional: Paste your ~/.ssh/id_ed25519.pub content here
+      - key: ENABLE_EASYTIER
+        value: "false" # Optional: Set to true or define ET_NAME to enable EasyTier
+      - key: ET_NAME
+        value: "" # Optional: e.g. "my-mesh"
+      - key: ET_SECRET
+        generateValue: true
+      - key: ET_PEERS
+        value: "" # Optional: e.g. "tcp://your-vps.com:11010"
+      - key: ENABLE_SINGBOX
+        value: "false" # Optional: Set to true or define SINGBOX_UUID to enable sing-box
+      - key: SINGBOX_UUID
+        generateValue: true
+      - key: KOMARI_TOKEN
+        value: "" # Optional: Node token for MangoHub telemetry
