@@ -120,8 +120,8 @@ This repository resolves both limitations:
 | `ET_PEERS` | *(Optional)* | Comma-separated list of external EasyTier peer addresses (e.g. `tcp://your-vps.com:11010`) |
 | `ENABLE_SINGBOX` | `false` | Explicitly enables sing-box proxy (`true` / `false`) |
 | `SINGBOX_UUID` | `1da2cc31-2c34-4b0b-b83c-ce3f7b8e6c2c` | User identifier for sing-box VLESS inbound (defining this activates sing-box) |
-| `KOMARI_TOKEN` | *(Optional)* | Authentication token for MangoHub / Komari telemetry (defining this activates the agent) |
-| `KOMARI_ENDPOINT`| `https://vps.mangoqwq.com` | Komari telemetry dashboard server URL |
+| `KOMARI_TOKEN` | *(Optional)* | Authentication token for MangoHub / Komari telemetry |
+| `KOMARI_ENDPOINT`| *(Optional)* | Dashboard server URL (e.g. `https://your-dashboard.com`, required when token is set) |
 | `KOMARI_FORCE_DISK_TOTAL`| `5368709120` | Virtual disk total in bytes for metric override (5 GiB) |
 
 ---

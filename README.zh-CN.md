@@ -120,8 +120,8 @@ Path: /health          Path: /shell/                         Path: /et (WS)     
 | `ET_PEERS` | *(可选)* | 外部 EasyTier 对等节点地址列表，以逗号分隔（如 `tcp://your-vps.com:11010`） |
 | `ENABLE_SINGBOX` | `false` | 显式启用 sing-box 代理模块（`true` / `false`） |
 | `SINGBOX_UUID` | `1da2cc31-2c34-4b0b-b83c-ce3f7b8e6c2c` | sing-box VLESS 鉴权标识（配置此项自动激活代理） |
-| `KOMARI_TOKEN` | *(可选)* | MangoHub 节点认证凭据（配置此项自动激活探针） |
-| `KOMARI_ENDPOINT` | `https://vps.mangoqwq.com` | MangoHub 监控面板地址 |
+| `KOMARI_TOKEN` | *(可选)* | MangoHub 节点认证凭据 |
+| `KOMARI_ENDPOINT` | *(可选)* | MangoHub 监控面板地址（如 `https://your-dashboard.com`，配置 Token 时必填） |
 | `KOMARI_FORCE_DISK_TOTAL` | `5368709120` | 磁盘虚拟配额字节数（5 GiB） |
 
 ---
