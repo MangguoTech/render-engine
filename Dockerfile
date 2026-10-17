@@ -10,7 +10,7 @@ RUN apk add --no-cache git ca-certificates && \
     cd /src/agent && \
     CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o /usr/local/bin/komari-agent .
 
-FROM alpine:latest
+FROM alpine:3.20
 
 LABEL maintainer="DevOps Team" \
       description="Modular Web-Box with persistent web terminal, SSH and on-demand extensions on Render Free Tier"

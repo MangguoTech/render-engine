@@ -57,6 +57,7 @@ ClientAliveCountMax 3
 EOF
 
 # Setup SSH password
+IS_RANDOM_PASS=0
 if [ -n "${SSH_PASS:-}" ]; then
     echo "root:${SSH_PASS}" | chpasswd
     log "SSH root password configured from SSH_PASS."
@@ -65,6 +66,7 @@ else
     echo "root:${RANDOM_PASS}" | chpasswd
     warn "SSH_PASS not provided. Generated random root password: ${RANDOM_PASS}"
     SSH_PASS="$RANDOM_PASS"
+    IS_RANDOM_PASS=1
 fi
 
 # Setup SSH Public Key if provided
@@ -344,7 +346,11 @@ fi
 log "=========================================================="
 log "render-engine is ready!"
 log "=========================================================="
-log "Web Terminal   : https://<render-host>/shell/ (User: ${TTYD_USER}, Pass: ${TTYD_PASS})"
+if [ "$IS_RANDOM_PASS" -eq 1 ]; then
+    log "Web Terminal   : https://<render-host>/shell/ (User: ${TTYD_USER}, Pass: ${RANDOM_PASS})"
+else
+    log "Web Terminal   : https://<render-host>/shell/ (User: ${TTYD_USER}, Pass: [CONFIGURED])"
+fi
 log "Health Probe   : https://<render-host>/health"
 if [ "$ENABLE_EASYTIER" = "true" ]; then
     log "EasyTier Mesh  : ENABLED (Network: ${ET_NAME}, Hostname: ${ET_HOSTNAME:-render-box})"

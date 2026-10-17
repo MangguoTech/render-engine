@@ -23,7 +23,7 @@ services:
       - key: ET_NAME
         value: "" # Optional: e.g. "my-mesh"
       - key: ET_SECRET
-        generateValue: true
+        generateValue: true # Set manually if joining an existing mesh; leave generateValue for new isolated mesh
       - key: ET_PEERS
         value: "" # Optional: e.g. "tcp://your-vps.com:11010"
       - key: ENABLE_SINGBOX
