@@ -238,6 +238,10 @@ fi
 # valid inbound HTTP traffic to guarantee 24/7 continuous operation within the 750h/mo quota.
 ENABLE_KEEPALIVE="${ENABLE_KEEPALIVE:-true}"
 KEEPALIVE_INTERVAL="${KEEPALIVE_INTERVAL:-300}"
+if ! [[ "$KEEPALIVE_INTERVAL" =~ ^[0-9]+$ ]] || [ "$KEEPALIVE_INTERVAL" -le 0 ]; then
+    warn "Invalid or non-numeric KEEPALIVE_INTERVAL '${KEEPALIVE_INTERVAL}'; resetting to default 300s."
+    KEEPALIVE_INTERVAL=300
+fi
 KEEPALIVE_URL="${KEEPALIVE_URL:-}"
 
 if [ -z "$KEEPALIVE_URL" ]; then
@@ -267,11 +271,11 @@ cleanup() {
         tmux kill-server 2>/dev/null || true
     fi
 
-    # 2. Terminate all active managed service daemons
+    # 2. Terminate all active managed service daemons (including child process groups)
     local active_pids=("${PID_CADDY:-}" "${PID_ET:-}" "${PID_SSHD:-}" "${PID_TTYD:-}" "${PID_KOMARI:-}" "${PID_SINGBOX:-}" "${PID_KEEPALIVE:-}")
     for pid in "${active_pids[@]}"; do
         if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-            kill -TERM "$pid" 2>/dev/null || true
+            kill -TERM -- -"$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
         fi
     done
     wait || true
@@ -418,6 +422,7 @@ FAIL_COUNT_SSHD=0
 FAIL_COUNT_TTYD=0
 FAIL_COUNT_SINGBOX=0
 FAIL_COUNT_KOMARI=0
+FAIL_COUNT_KEEPALIVE=0
 MAX_FAILURES=5
 
 while true; do
@@ -518,11 +523,20 @@ while true; do
         fi
     fi
 
-    # Check Keepalive Watchdog (Only if enabled)
+    # Check Keepalive Watchdog (Only if enabled, with circuit breaker)
     if [ "$ENABLE_KEEPALIVE" = "true" ] && [ -n "${KEEPALIVE_URL:-}" ]; then
         if [ -z "${PID_KEEPALIVE:-}" ] || ! kill -0 "$PID_KEEPALIVE" 2>/dev/null; then
-            warn "Keepalive worker died. Restarting..."
-            start_keepalive
+            ((FAIL_COUNT_KEEPALIVE++)) || true
+            warn "Keepalive worker died! (Failure count: $FAIL_COUNT_KEEPALIVE/$MAX_FAILURES)"
+            if [ "$FAIL_COUNT_KEEPALIVE" -ge "$MAX_FAILURES" ]; then
+                err "Keepalive worker exceeded maximum consecutive crash limit ($MAX_FAILURES). Stopping auto-restart."
+                PID_KEEPALIVE=""
+                ENABLE_KEEPALIVE="false"
+            else
+                start_keepalive
+            fi
+        else
+            FAIL_COUNT_KEEPALIVE=0
         fi
     fi
 
