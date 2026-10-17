@@ -2,6 +2,15 @@
 
 English | [简体中文](README.zh-CN.md)
 
+[![Render Deploy](https://img.shields.io/badge/Render-Free%20Web%20Service-46E3B7?logo=render&logoColor=white)](https://render.com)
+[![Alpine Linux](https://img.shields.io/badge/Alpine-3.20%20(x86__64)-0D597F?logo=alpinelinux&logoColor=white)](https://alpinelinux.org/)
+[![EasyTier](https://img.shields.io/badge/EasyTier-v2.6.4%20(smoltcp)-FF6600)](https://github.com/EasyTier/EasyTier)
+[![Caddy](https://img.shields.io/badge/Caddy-v2%20Multiplexing-1F88C0?logo=caddy&logoColor=white)](https://caddyserver.com/)
+[![tmux](https://img.shields.io/badge/tmux-Session%20Persistence-1BB954?logo=tmux&logoColor=white)](https://github.com/tmux/tmux)
+[![sing-box](https://img.shields.io/badge/sing--box-v1.10+-E53E3E)](https://github.com/SagerNet/sing-box)
+[![Memory Footprint](https://img.shields.io/badge/RAM-~50MB%20Footprint-blueviolet)](#technical-implementations)
+[![LINUX DO](https://img.shields.io/badge/Thanks-LINUX%20DO-f59e0b?logo=discourse&logoColor=white)](https://linux.do)
+
 Single-container runtime environment for Render.com free Docker web services. It runs an EasyTier user-space mesh VPN (smoltcp), an OpenSSH server, a persistent web terminal (ttyd with tmux), and a sing-box proxy behind a Caddy port multiplexer.
 
 The container operates without `/dev/net/tun` or `CAP_NET_ADMIN` privileges. Total resident memory ranges from 30 MB to 50 MB, remaining well below the 512 MB platform memory limit.
@@ -163,6 +172,12 @@ Render free instances suspend after 15 minutes without inbound HTTP requests. To
 ### 5. Proxy Services
 - **In-Mesh Mixed Proxy**: Listening on `0.0.0.0:10808` inside the container. Mesh participants can route HTTP and SOCKS5 traffic using `socks5://10.144.144.90:10808` or `http://10.144.144.90:10808`.
 - **Public VLESS Inbound**: Listening on `wss://your-service.onrender.com/vless-ws`, handled by Caddy TLS termination and routed to sing-box on `127.0.0.1:20808`.
+
+---
+
+## Acknowledgments
+
+Special thanks to the [LINUX DO](https://linux.do) community for valuable discussions and technical feedback.
 
 ---
 

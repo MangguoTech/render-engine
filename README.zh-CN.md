@@ -2,6 +2,15 @@
 
 [English Documentation](README.md) | 简体中文文档
 
+[![Render Deploy](https://img.shields.io/badge/Render-Free%20Web%20Service-46E3B7?logo=render&logoColor=white)](https://render.com)
+[![Alpine Linux](https://img.shields.io/badge/Alpine-3.20%20(x86__64)-0D597F?logo=alpinelinux&logoColor=white)](https://alpinelinux.org/)
+[![EasyTier](https://img.shields.io/badge/EasyTier-v2.6.4%20(smoltcp)-FF6600)](https://github.com/EasyTier/EasyTier)
+[![Caddy](https://img.shields.io/badge/Caddy-v2%20Multiplexing-1F88C0?logo=caddy&logoColor=white)](https://caddyserver.com/)
+[![tmux](https://img.shields.io/badge/tmux-Session%20Persistence-1BB954?logo=tmux&logoColor=white)](https://github.com/tmux/tmux)
+[![sing-box](https://img.shields.io/badge/sing--box-v1.10+-E53E3E)](https://github.com/SagerNet/sing-box)
+[![Memory Footprint](https://img.shields.io/badge/RAM-~50MB%20Footprint-blueviolet)](#关键技术实现)
+[![LINUX DO](https://img.shields.io/badge/Thanks-LINUX%20DO-f59e0b?logo=discourse&logoColor=white)](https://linux.do)
+
 该项目针对 Render.com 免费 Docker Web Service 运行环境设计。系统在单个容器内整合了 EasyTier 用户态网格组网（smoltcp）、OpenSSH 服务端、基于 ttyd 与 tmux 的持久化 Web 终端以及 sing-box 代理组件，由 Caddy 负责前端单端口流量分流。
 
 容器运行在无 `/dev/net/tun` 设备与无 `CAP_NET_ADMIN` 特权的受限环境中。全套组件常驻内存介于 30 MB 至 50 MB 之间，远低于平台 512 MB 的内存上限。
@@ -163,6 +172,12 @@ Render 免费实例在连续 15 分钟无入站 HTTP 请求后会进入休眠状
 ### 5. 代理服务接入
 - **虚拟网内混合代理**：容器在 `0.0.0.0:10808` 监听 HTTP 与 SOCKS5 流量。网格内节点可把代理地址指向 `socks5://10.144.144.90:10808` 或 `http://10.144.144.90:10808`。
 - **公网 VLESS 入站**：客户端通过 `wss://your-service.onrender.com/vless-ws` 接入，流量经 Caddy 解密后投递至 `127.0.0.1:20808`。
+
+---
+
+## 致谢
+
+鸣谢 [LINUX DO](https://linux.do) 社区在技术交流与方案探讨中的支持与反馈。
 
 ---
 
