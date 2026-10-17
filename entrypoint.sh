@@ -172,6 +172,23 @@ cleanup() {
 
 trap cleanup SIGINT SIGTERM SIGHUP
 
+# Prepare tmux configuration & persistent session wrapper for ttyd
+cat > /root/.tmux.conf << 'EOF'
+set -g default-terminal "xterm-256color"
+set -g mouse on
+set -g history-limit 50000
+set -g window-size latest
+setw -g aggressive-resize on
+set -s escape-time 0
+EOF
+
+cat > /usr/local/bin/ttyd-session << 'EOF'
+#!/usr/bin/env bash
+# Attach to existing tmux session 'main' or create new one with bash
+exec tmux -f /root/.tmux.conf new-session -A -s main /bin/bash
+EOF
+chmod +x /usr/local/bin/ttyd-session
+
 # Start SSH daemon
 log "Starting sshd on ports 22 and 2222..."
 /usr/sbin/sshd -D -e &
@@ -184,17 +201,25 @@ log "Starting easytier-core..."
 PID_ET=$!
 PIDS+=("$PID_ET")
 
-# Start ttyd (Emergency web terminal)
+# Start ttyd (Emergency web terminal with tmux session persistence & ping keepalive)
 TTYD_USER="${TTYD_USER:-admin}"
 TTYD_PASS="${TTYD_PASS:-$SSH_PASS}"
-log "Starting ttyd on 127.0.0.1:7681 (/shell) with Basic Auth..."
-/usr/local/bin/ttyd \
-    --port 7681 \
-    --interface 127.0.0.1 \
-    --base-path "/shell" \
-    --writable \
-    --credential "${TTYD_USER}:${TTYD_PASS}" \
-    /bin/bash &
+
+start_ttyd() {
+    /usr/local/bin/ttyd \
+        --port 7681 \
+        --interface 127.0.0.1 \
+        --base-path "/shell" \
+        --writable \
+        --ping-interval 15 \
+        -t disableLeaveAlert=true \
+        -t fontSize=14 \
+        --credential "${TTYD_USER}:${TTYD_PASS}" \
+        /usr/local/bin/ttyd-session &
+}
+
+log "Starting ttyd on 127.0.0.1:7681 (/shell) with Basic Auth and tmux persistence..."
+start_ttyd
 PID_TTYD=$!
 PIDS+=("$PID_TTYD")
 
@@ -373,13 +398,7 @@ while true; do
             err "ttyd exceeded maximum crash limit. Aborting container to trigger restart."
             exit 1
         fi
-        /usr/local/bin/ttyd \
-            --port 7681 \
-            --interface 127.0.0.1 \
-            --base-path "/shell" \
-            --writable \
-            --credential "${TTYD_USER}:${TTYD_PASS}" \
-            /bin/bash &
+        start_ttyd
         PID_TTYD=$!
         PIDS+=("$PID_TTYD")
     fi
