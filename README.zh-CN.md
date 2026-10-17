@@ -1,6 +1,8 @@
+<div align="center">
+
 # render-engine
 
-[English Documentation](README.md) | 简体中文文档
+[English](README.md) · **简体中文**
 
 [![Render Deploy](https://img.shields.io/badge/Render-Free%20Web%20Service-46E3B7?logo=render&logoColor=white)](https://render.com)
 [![Alpine Linux](https://img.shields.io/badge/Alpine-3.20%20(x86__64)-0D597F?logo=alpinelinux&logoColor=white)](https://alpinelinux.org/)
@@ -10,6 +12,10 @@
 [![sing-box](https://img.shields.io/badge/sing--box-v1.10+-E53E3E)](https://github.com/SagerNet/sing-box)
 [![Memory Footprint](https://img.shields.io/badge/RAM-~50MB%20Footprint-blueviolet)](#关键技术实现)
 [![LINUX DO](https://img.shields.io/badge/Thanks-LINUX%20DO-f59e0b?logo=discourse&logoColor=white)](https://linux.do)
+
+<p>面向 Render.com 免费 Docker Web Service 的单容器全功能运行环境</p>
+
+</div>
 
 该项目针对 Render.com 免费 Docker Web Service 运行环境设计。系统在单个容器内整合了 EasyTier 用户态网格组网（smoltcp）、OpenSSH 服务端、基于 ttyd 与 tmux 的持久化 Web 终端以及 sing-box 代理组件，由 Caddy 负责前端单端口流量分流。
 
