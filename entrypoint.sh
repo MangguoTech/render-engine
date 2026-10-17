@@ -232,6 +232,22 @@ if [ "$ENABLE_KOMARI" = "false" ]; then
     log "Komari monitoring agent is DISABLED (activate by providing both KOMARI_TOKEN and KOMARI_ENDPOINT)."
 fi
 
+# Feature 4: Autonomous Inbound Keepalive Watchdog
+# Render Free Tier terminates pods after 15 minutes of inbound HTTP inactivity.
+# This autonomous watchdog queries the public edge URL every N seconds, generating
+# valid inbound HTTP traffic to guarantee 24/7 continuous operation within the 750h/mo quota.
+ENABLE_KEEPALIVE="${ENABLE_KEEPALIVE:-true}"
+KEEPALIVE_INTERVAL="${KEEPALIVE_INTERVAL:-300}"
+KEEPALIVE_URL="${KEEPALIVE_URL:-}"
+
+if [ -z "$KEEPALIVE_URL" ]; then
+    if [ -n "${RENDER_EXTERNAL_URL:-}" ]; then
+        KEEPALIVE_URL="${RENDER_EXTERNAL_URL%/}/health"
+    elif [ -n "${RENDER_EXTERNAL_HOSTNAME:-}" ]; then
+        KEEPALIVE_URL="https://${RENDER_EXTERNAL_HOSTNAME}/health"
+    fi
+fi
+
 # ------------------------------------------------------------------------------
 # 3. Process Management & Background Services
 # ------------------------------------------------------------------------------
@@ -241,6 +257,7 @@ PID_TTYD=""
 PID_CADDY=""
 PID_KOMARI=""
 PID_SINGBOX=""
+PID_KEEPALIVE=""
 
 cleanup() {
     log "Received shutdown signal. Stopping all background processes gracefully..."
@@ -251,7 +268,7 @@ cleanup() {
     fi
 
     # 2. Terminate all active managed service daemons
-    local active_pids=("${PID_CADDY:-}" "${PID_ET:-}" "${PID_SSHD:-}" "${PID_TTYD:-}" "${PID_KOMARI:-}" "${PID_SINGBOX:-}")
+    local active_pids=("${PID_CADDY:-}" "${PID_ET:-}" "${PID_SSHD:-}" "${PID_TTYD:-}" "${PID_KOMARI:-}" "${PID_SINGBOX:-}" "${PID_KEEPALIVE:-}")
     for pid in "${active_pids[@]}"; do
         if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
             kill -TERM "$pid" 2>/dev/null || true
@@ -343,6 +360,24 @@ if [ "$ENABLE_KOMARI" = "true" ] && [ -x /usr/local/bin/komari-agent ] && [ -f /
     PID_KOMARI=$!
 fi
 
+# Start Autonomous Keepalive Watchdog (Core Resilience Feature)
+start_keepalive() {
+    log "Starting autonomous keepalive watchdog (Target: ${KEEPALIVE_URL}, Interval: ${KEEPALIVE_INTERVAL}s)..."
+    (
+        # Initial grace period to allow Caddy and OpenSSH to fully initialize
+        sleep 10
+        while true; do
+            curl -s -m 15 -A "render-engine-keepalive/1.0" "$KEEPALIVE_URL" >/dev/null 2>&1 || true
+            sleep "$KEEPALIVE_INTERVAL"
+        done
+    ) &
+    PID_KEEPALIVE=$!
+}
+
+if [ "$ENABLE_KEEPALIVE" = "true" ] && [ -n "${KEEPALIVE_URL:-}" ]; then
+    start_keepalive
+fi
+
 log "=========================================================="
 log "render-engine is ready!"
 log "=========================================================="
@@ -352,6 +387,11 @@ else
     log "Web Terminal   : https://<render-host>/shell/ (User: ${TTYD_USER}, Pass: [CONFIGURED])"
 fi
 log "Health Probe   : https://<render-host>/health"
+if [ "$ENABLE_KEEPALIVE" = "true" ] && [ -n "${KEEPALIVE_URL:-}" ]; then
+    log "Auto Keepalive : ENABLED (Target: ${KEEPALIVE_URL}, Interval: ${KEEPALIVE_INTERVAL}s)"
+else
+    log "Auto Keepalive : DISABLED (Set ENABLE_KEEPALIVE=true or configure KEEPALIVE_URL)"
+fi
 if [ "$ENABLE_EASYTIER" = "true" ]; then
     log "EasyTier Mesh  : ENABLED (Network: ${ET_NAME}, Hostname: ${ET_HOSTNAME:-render-box})"
 else
@@ -475,6 +515,14 @@ while true; do
                 ) &
                 PID_KOMARI=$!
             fi
+        fi
+    fi
+
+    # Check Keepalive Watchdog (Only if enabled)
+    if [ "$ENABLE_KEEPALIVE" = "true" ] && [ -n "${KEEPALIVE_URL:-}" ]; then
+        if [ -z "${PID_KEEPALIVE:-}" ] || ! kill -0 "$PID_KEEPALIVE" 2>/dev/null; then
+            warn "Keepalive worker died. Restarting..."
+            start_keepalive
         fi
     fi
 

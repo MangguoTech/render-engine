@@ -123,6 +123,9 @@ Path: /health          Path: /shell/                         Path: /et (WS)     
 | `KOMARI_TOKEN` | *(可选)* | MangoHub 节点认证凭据 |
 | `KOMARI_ENDPOINT` | *(可选)* | MangoHub 监控面板地址（如 `https://your-dashboard.com`，配置 Token 时必填） |
 | `KOMARI_FORCE_DISK_TOTAL` | `5368709120` | 磁盘虚拟配额字节数（5 GiB） |
+| `ENABLE_KEEPALIVE` | `true` | 启用自主内置 Inbound HTTP 保活巡检，防止 Render 15 分钟闲置休眠 |
+| `KEEPALIVE_INTERVAL` | `300` | 保活拨测频率秒数（默认 300 秒 / 5 分钟） |
+| `KEEPALIVE_URL` | *(自动)* | 目标健康探测地址（默认自动从 Render 环境变量解析自身公网域名） |
 
 ---
 
@@ -153,8 +156,10 @@ Path: /health          Path: /shell/                         Path: /et (WS)     
 2. 输入 `TTYD_USER` 与 `TTYD_PASS` 设定的认证凭据（或从部署日志中复制）。
 3. 终端自动挂载持久化 `tmux` 会话。输入 `exit` 可销毁当前会话并在下次刷新时重置干净环境。
 
-### 2. 实例防休眠配置
-Render 免费实例在连续 15 分钟无入站 HTTP 请求后会进入休眠状态。在外部监控系统（如 Uptime Kuma、Cron-job.org 或定时任务）中添加 HTTP GET 监控项，以 5 至 10 分钟为周期请求 `https://your-service.onrender.com/health`，保持实例持续响应。
+### 2. 实例防休眠与 24/7 持续运行
+Render 免费层在连续 15 分钟无外部入站 HTTP 请求后会自动销毁 Pod 并在访问时冷启动。为了在 Render 充裕的每月 750 小时免费额度内（`31 天 × 24h = 744h`）实现全月 24/7 不间断运行且不丢失会话上下文：
+- **内置自主保活引擎（默认开启）**：`render-engine` 内置了守护任务（`ENABLE_KEEPALIVE=true`），会自动读取平台分配的公网域名（`RENDER_EXTERNAL_URL`），每隔 5 分钟向自身 `/health` 发起真实的入站 HTTP 拨测，持续重置 Render 的闲置计时器，无需手动搭建外部定时任务。
+- **外部监控兜底（可选）**：如遇到容器意外崩溃或需冷启动自愈，亦可在外部监控系统（如 Uptime Kuma、Cron-job.org 或自建 VPS Crontab）中添加 HTTP GET 拨测，以 5 至 10 分钟为周期请求 `https://your-service.onrender.com/health`。
 
 ### 3. EasyTier 虚拟网连接（按需启用时）
 若启用了 EasyTier 组网模块，在客户端主机启动进程打通隧道：

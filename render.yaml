@@ -34,3 +34,7 @@ services:
         value: "" # Optional: Node token for MangoHub telemetry
       - key: KOMARI_ENDPOINT
         value: "" # Optional: e.g. "https://your-dashboard.com"
+      - key: ENABLE_KEEPALIVE
+        value: "true" # Keepalive daemon prevents Render 15-min inactivity hibernation
+      - key: KEEPALIVE_INTERVAL
+        value: "300" # Inbound ping interval in seconds (default 300s = 5m)

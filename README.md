@@ -123,6 +123,9 @@ This repository resolves both limitations:
 | `KOMARI_TOKEN` | *(Optional)* | Authentication token for MangoHub / Komari telemetry |
 | `KOMARI_ENDPOINT`| *(Optional)* | Dashboard server URL (e.g. `https://your-dashboard.com`, required when token is set) |
 | `KOMARI_FORCE_DISK_TOTAL`| `5368709120` | Virtual disk total in bytes for metric override (5 GiB) |
+| `ENABLE_KEEPALIVE`| `true` | Enables autonomous inbound HTTP ping daemon to prevent Render 15-min hibernation |
+| `KEEPALIVE_INTERVAL`| `300` | Inbound keepalive ping frequency in seconds (default: 300s / 5m) |
+| `KEEPALIVE_URL`| *(Auto)* | Target health URL (auto-detected from Render environment variables) |
 
 ---
 
@@ -153,8 +156,10 @@ Access the web terminal directly from any browser without installing local clien
 2. Enter the credentials configured by `TTYD_USER` and `TTYD_PASS` (or retrieved from the deploy log).
 3. The session automatically attaches to the persistent `tmux` session. Running `exit` terminates the session and triggers automatic reinitialization on next reload.
 
-### 2. Spindown Prevention
-Render free instances suspend after 15 minutes of inbound HTTP inactivity. To maintain continuous operation, configure an external uptime monitor (such as Uptime Kuma, Cron-job.org, or a GitHub Actions workflow) to issue an HTTP GET request to `https://your-service.onrender.com/health` every 5 to 10 minutes.
+### 2. Spindown Prevention & 24/7 Continuity
+Render free tier instances automatically hibernate after 15 minutes of inbound HTTP inactivity, destroying ephemeral container state. To ensure 24/7 continuous operation within Render's generous 750 hours/month free quota (`31 days × 24h = 744h`):
+- **Built-in Self-Keepalive (Default)**: `render-engine` includes an autonomous keepalive worker (`ENABLE_KEEPALIVE=true`) that automatically detects the instance's public domain (`RENDER_EXTERNAL_URL`) and issues an HTTP GET to `/health` every 5 minutes. This generates real inbound HTTP traffic, permanently keeping the instance awake without requiring external cron services.
+- **External Redundancy (Optional)**: You can additionally set up external monitors (e.g. UptimeRobot, Cron-job.org, or a VPS cron job) targeting `https://your-service.onrender.com/health` at 5–10 minute intervals as a cold-start recovery safeguard.
 
 ### 3. EasyTier Mesh Connection (When Enabled)
 If EasyTier is activated, connect the local machine to the virtual mesh network:
