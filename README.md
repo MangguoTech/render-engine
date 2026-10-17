@@ -1,166 +1,196 @@
-# Render 免费容器 EasyTier (No-TUN) + SSH + Caddy 极简部署
+# 🚀 Render Engine: EasyTier (No-TUN) + SSH + Caddy + Web Terminal + sing-box 极简云原生运维引擎
 
-本仓库专为 **Render 免费 Web Service** 打造，提供在**无特权（No-TUN / 无 `CAP_NET_ADMIN`）**容器环境下运行最新版 **EasyTier P2P Mesh VPN** 与 **OpenSSH Server** 的完整解决方案。
+[![Render Deploy](https://img.shields.io/badge/Render-Free%20Web%20Service-46E3B7?logo=render&logoColor=white)](https://render.com)
+[![Alpine Linux](https://img.shields.io/badge/Alpine-3.20%20(x86__64)-0D597F?logo=alpinelinux&logoColor=white)](https://alpinelinux.org/)
+[![EasyTier](https://img.shields.io/badge/EasyTier-v2.6.4%20(smoltcp)-FF6600)](https://github.com/EasyTier/EasyTier)
+[![Caddy](https://img.shields.io/badge/Caddy-v2%20Multiplexing-1F88C0?logo=caddy&logoColor=white)](https://caddyserver.com/)
+[![tmux](https://img.shields.io/badge/tmux-Session%20Persistence-1BB954?logo=tmux&logoColor=white)](https://github.com/tmux/tmux)
+[![sing-box](https://img.shields.io/badge/sing--box-v1.10+-E53E3E)](https://github.com/SagerNet/sing-box)
+[![Memory Footprint](https://img.shields.io/badge/RAM-~50MB%20Footprint-blueviolet)](#-核心特性)
 
-通过 Caddy 单端口反向代理实现 HTTP 健康检查、EasyTier WebSocket 隧道与紧急 Web 终端分流，使本地机器能够直接与该容器组网，并通过 EasyTier 虚拟 IP 直接 SSH 登录。
+专为 **Render.com 免费 Docker Web Service** 量身定制的生产级运维底座。在**完全无宿主特权（No-TUN / 无 `/dev/net/tun` / 无 `CAP_NET_ADMIN`）**的受限容器内，实现了全套自愈网络与远程运维能力：
+
+- 零公网端口暴露风险，通过 **EasyTier 用户态协议栈（smoltcp）** 接入个人 P2P 虚拟网格；
+- 通过 **Caddy 单公网端口 4 路复用** 分流存活探针、组网隧道、持久化 Web 终端及双向代理；
+- 内置 **tmux 会话守护** 与 **WebSocket 边缘保活**，彻底根治 Web Terminal 频繁断线与重连丢失上下文痛点；
+- 内置 **MangoHub (Komari) 真实磁盘配额对齐**，彻底解决 Render 多租户宿主机 OverlayFS 386GB 虚假告警；
+- 全套二进制常驻内存仅 **30~50MB**，轻松驾驭 Render 512MB 免费配额，稳定运行不 OOM。
 
 ---
 
-## 🌟 核心特性
+## 📐 架构拓扑与多路复用设计
 
-- **极低内存消耗（防 512MB OOM）**：基于 `alpine:latest`，纯 C/Rust/Go 二进制（Caddy + EasyTier + ttyd + OpenSSH），不引入 Python/Node.js 等重型运行时，全套常驻内存仅约 30~50MB。
-- **Render 单端口多路复用**：由 Caddy 监听 `$PORT`（默认 10000），Render 边缘网关自动提供 HTTPS/WSS 终结：
-  - `GET /health`：存活探针，返回 `OK`，供 UptimeRobot / Cron 定时 Ping 保活及 Render 健康检查。
-  - `/et`（或通用 WebSocket 升级）：反向代理至容器内部 `127.0.0.1:11010`，本地 EasyTier 可直接通过 `wss://<render-app>.onrender.com/et` 接入！
-  - `/shell/*`：内置 `ttyd` 极轻量终端（带 Basic Auth 认证），提供应急 Web 终端，防止网络配置错误失联。
-- **EasyTier smoltcp 用户态网络栈**：使用 `--no-tun --use-smoltcp`，完美解决云原生无特权容器缺乏 `/dev/net/tun` 设备及无法创建虚拟网卡的问题，直接劫持并转发容器内的 SSH 流量。
-- **免密与密码认证双支持**：支持注入 `SSH_PUBKEY` 与 `SSH_PASS`，自动配置 `/root/.ssh/authorized_keys`，并支持监听 `22` 与 `2222` 双端口。
-- **进程守护**：`entrypoint.sh` 包含完整的故障自愈与退出信号捕获，保证任意子进程意外挂掉时自动拉起。
+Render 免费实例仅允许监听一个外部端口（环境变量 `$PORT`，默认 10000），由 Caddy 统一接管流量并分流：
+
+```text
+                           Render Public Edge (Port 10000 / HTTPS / WSS)
+                                                 │
+                                    ┌────────────┴────────────┐
+                                    │   Caddy Web Multiplexer │
+                                    └────────────┬────────────┘
+                                                 │
+       ┌──────────────────────┬──────────────────┴──────────────────┬──────────────────────┐
+       ▼                      ▼                                     ▼                      ▼
+Path: /health          Path: /et (WS)                        Path: /shell/          Path: /vless-ws
+┌──────────────┐   ┌────────────────────────┐            ┌──────────────────────┐   ┌──────────────────────┐
+│ 200 OK 探活  │   │ EasyTier WebSocket 监听│            │ ttyd 应急 Web 终端   │   │ sing-box VLESS 入站  │
+│ (防 15m 休眠)│   │ (127.0.0.1:11010)      │            │ (BasicAuth 认证保护) │   │ (127.0.0.1:20808)    │
+└──────────────┘   └──────────┬─────────────┘            └──────────┬───────────┘   └──────────────────────┘
+                              │                                     │
+                    [smoltcp 用户态网络栈]                  [tmux 持久化守护会话]
+                              │                                     │
+               ┌──────────────┴──────────────┐             ┌────────┴───────────┐
+               ▼                             ▼             ▼                    ▼
+   OpenSSH (Port 22 / 2222)       sing-box (Port 10808)  [main] 会话保持   鼠标滚轮 / 5万行历史
+   (密钥 / 密码双认证)            (虚拟网内 Mixed 代理)    (断网/刷新无缝接回) (最新视窗动态拉伸)
+```
 
 ---
 
-## 🚀 部署到 Render 步骤
+## 🌟 核心特性与生产级治理
 
-### 方式 1：通过 Git 仓库一键部署（推荐）
+### 1. 极致轻量化（防 512MB OOM）
+基于 Alpine Linux 精简环境，所有核心组件（Caddy、EasyTier、ttyd、sing-box、komari-agent）均为纯 C / Rust / Go 原生二进制构建，移除 Python/Node 等重型解释器，**整机全套常驻内存仅约 30MB ~ 50MB**，留出 90% 冗余给用户日常运维。
 
-1. 将当前目录代码推送到你的 GitHub 仓库（例如 `render-engine`）：
-   ```bash
-   cd render-engine
-   git init
-   git add .
-   git commit -m "feat: initial production-ready easytier render service"
-   git branch -M main
-   git remote add origin https://github.com/dengyie/render-engine.git
-   git push -u origin main
-   ```
+### 2. EasyTier 用户态 smoltcp 虚拟网格
+无视云平台容器对 `/dev/net/tun` 设备的限制，启用 `--no-tun --use-smoltcp`，在用户空间模拟轻量级 TCP/IP 协议栈，不仅能够与本地 PC、VPS 形成低延迟加密 Mesh 局域网，还能直接通过虚拟 IP 穿透登录容器 SSH。
 
-2. 登录 [Render Dashboard](https://dashboard.render.com/)：
-   - 点击 **New +** -> **Web Service**。
-   - 选择刚刚推送的 GitHub 仓库。
-   - **Environment** 选择 `Docker`。
-   - **Instance Type** 选择 `Free`。
-   - **Health Check Path** 填写 `/health`。
+### 3. 持久化 Web Shell（ttyd + tmux 原生保活）
+针对浏览器 Web 终端的典型痛点进行了全面深度治理：
+- **心跳防掐断**：ttyd 开启 `--ping-interval 15`，Caddy 开启 `flush_interval -1`，主动双向保活，彻底阻断 Cloudflare（100s 阈值）和 AWS ALB（60~100s 阈值）因空闲无按键直接切断连接的问题；
+- **重连零丢失**：接入 `/usr/local/bin/ttyd-session`，自动 Attach 到名为 `main` 的后台常驻 tmux 会话；无论网络颠簸、页面刷新还是电脑休眠唤醒，重新进入即刻无缝恢复之前的全量输出与运行中的程序；
+- **全屏交互升级**：预置 `set -g mouse on`，无需快捷键即可用**鼠标滚轮/触控板上下回滚**查看多达 50,000 行历史，自带暗黑简约状态栏；
+- **优雅停机保护**：容器退出或平滑重启时显式下发 `tmux kill-server`，通知所有前后台任务优雅收尾，杜绝直接遭遇底层 `SIGKILL` 导致数据受损。
 
-3. 在 **Environment Variables** 添加以下环境变量（详见配置说明）：
+### 4. 磁盘配额对齐（告别 386GB 虚假爆满告警）
+在无特权 Docker 容器中，`df -h /` 与探针调用 `statvfs` 会直接穿透汇报底层 Kubernetes 宿主机节点的真实 OverlayFS 物理状态（显示 386.9 GB / 82%~91% 满）。本仓库深度适配 MangoHub，通过 `AGENT_FORCE_DISK_TOTAL` 注入 5GB 虚拟配额，并以内核跳过虚拟文件系统遍历计算真实占用（实际仅 ~190MB），监控面板彻底恢复绿灯。
 
-| 环境变量名 | 默认值 / 示例 | 说明 |
+### 5. 生产级单例看门狗与熔断器
+`entrypoint.sh` 具备 5 秒级健康巡视与自动拉活机制，重构了独立命名 PID 实时生命周期追踪，杜绝长期运行下僵死 PID 累积，并为各关键服务配备最大连续崩溃熔断上限（`MAX_FAILURES=5`），杜绝死循环日志爆炸。
+
+---
+
+## 📋 环境变量速查表
+
+在 Render Web Service 控制台的 **Environment** 中配置以下变量即可灵活开箱即用：
+
+| 变量名 | 默认值 / 推荐示例 | 说明 |
 | :--- | :--- | :--- |
-| `ET_NAME` | `render-mesh` | EasyTier 网络名称（需与本地保持一致） |
-| `ET_SECRET` | `MySecret123456` | EasyTier 网络密钥（需与本地保持一致） |
-| `ET_IP` | `10.144.144.10` | 容器在虚拟网内的 IP |
-| `ET_HOSTNAME` | `render-box` | 节点显示主机名 |
-| `ET_PEERS` | *(留空)* | 可选。对端公网节点（若有公共 VPS 可填入） |
-| `SSH_PASS` | `YourPassword123` | Root 用户登录密码（留空则自动生成随机密码并在日志中打印） |
-| `SSH_PUBKEY` | `ssh-ed25519 AAAAC3...` | 你的公钥内容（`~/.ssh/id_ed25519.pub`，用于免密登录） |
-| `TTYD_USER` | `admin` | Web 应急终端登录用户名 |
-| `TTYD_PASS` | `YourPassword123` | Web 应急终端登录密码 |
-
-4. 点击 **Create Web Service** 开始构建，等待部署成功后，会获得 Render 分配的域名，例如：`https://easytier-mesh.onrender.com`。
+| **`PORT`** | `10000` | Render 外部公网端口（平台自动注入，无需手动改动） |
+| **`ET_NAME`** | `mango-mesh` | EasyTier 虚拟网名称（需与组网节点保持一致） |
+| **`ET_SECRET`** | `YourSecretKey@2026` | EasyTier 虚拟网加密密钥（需与组网节点保持一致） |
+| **`ET_IP`** | `10.144.144.90` | 容器在虚拟网内的静态 IPv4 地址 |
+| **`ET_HOSTNAME`** | `render-box` | 节点在虚拟网格中显示的主机名 |
+| **`ET_PEERS`** | `tcp://vps.example.com:11010` | *(可选)* 初始对等节点或中继 Hub 地址（逗号/空格分隔） |
+| **`SSH_PUBKEY`** | `ssh-ed25519 AAAAC3...` | *(推荐)* 管理机公钥内容（写入 `authorized_keys`，实现免密直连） |
+| **`SSH_PASS`** | `YourSecurePassword` | *(可选)* root 密码（留空则容器启动时自动生成 18 位随机强密码） |
+| **`TTYD_USER`** | `admin` | 应急 Web 终端 BasicAuth 用户名 |
+| **`TTYD_PASS`** | `YourSecurePassword` | 应急 Web 终端 BasicAuth 密码（留空则默认回退复用 `SSH_PASS`） |
+| **`KOMARI_TOKEN`** | `3WU9ZdCTvrDeUW8w...` | *(可选)* MangoHub (Komari) 监控探针节点 Token |
+| **`KOMARI_FORCE_DISK_TOTAL`** | `5368709120` (5GB) | 覆盖探针汇报的磁盘配额，开启容器真实体积度量 |
+| **`SINGBOX_UUID`** | `1da2cc31-2c34-4b0b...` | sing-box VLESS 入站鉴权 UUID |
 
 ---
 
-## 💻 本地连接与组网使用指南
+## 🚀 极速部署指南（3 分钟上线）
 
-部署成功后，假设你的 Render 域名为 `easytier-mesh.onrender.com`。
+### 步骤 1：Fork 或推送代码到个人 GitHub
+```bash
+git clone https://github.com/dengyie/render-engine.git
+cd render-engine
+# 推送到您自己的私有或公开 GitHub 仓库
+```
 
-### 1. 本地启动 EasyTier 客户端连入容器
+### 步骤 2：在 Render 一键创建 Web Service
+1. 登录 [Render Dashboard](https://dashboard.render.com/)，点击 **New +** $\to$ **Web Service**；
+2. 选择你推送的 GitHub 仓库；
+3. 关键配置项选择：
+   - **Environment**：`Docker`
+   - **Region**：按需选择（如 `Oregon`, `Singapore`, `Frankfurt`）
+   - **Instance Type**：`Free`
+   - **Health Check Path**：填入 `/health`（关键，用于探活检测）
+4. 在 **Environment Variables** 添加你的自定义变量（如 `ET_NAME`, `ET_SECRET`, `SSH_PUBKEY` 等）；
+5. 点击 **Create Web Service**，等待 2 分钟构建完成即可！
 
-在你的本地 macOS/Linux/Windows 电脑上安装 EasyTier（需具备管理员/root 权限以创建本地 tun 网卡）：
+---
 
-#### 命令方式启动：
+## 💻 客户端组网与连接指引
+
+部署完成后，Render 会分配一个公共域名，例如 `https://render-engine.onrender.com`。
+
+### 1. 本地客户端通过 WSS 穿透加入网格
+在你的本地电脑（macOS / Linux / Windows）运行官方 EasyTier：
 ```bash
 sudo easytier-core \
-  --network-name "render-mesh" \
-  --network-secret "MySecret123456" \
-  --ipv4 "10.144.144.20" \
-  --peers "wss://easytier-mesh.onrender.com/et"
+  --network-name "mango-mesh" \
+  --network-secret "YourSecretKey@2026" \
+  --ipv4 "10.144.144.100" \
+  --peers "wss://render-engine.onrender.com/et"
 ```
+> **提示**：通过 `easytier-cli peer` 查看状态，看到对应节点处于 `Connected` 状态即表示 P2P / 穿透打通。
 
-> **注意：**
-> 1. `--network-name` 和 `--network-secret` 必须与 Render 容器环境变量完全一致。
-> 2. `--ipv4` 指定本地电脑在虚拟网内的 IP（如 `10.144.144.20`），不可与容器的 `10.144.144.10` 冲突。
-> 3. `--peers` 填入 `wss://<你的-render-域名>/et`，Render 的 HTTPS 边缘网关会自动升级 WSS 并反代给容器内的 EasyTier。
-
-#### 检查组网状态：
-在另一个终端执行：
+### 2. 通过虚拟 IP 直接 SSH 登录
 ```bash
-easytier-cli peer
-```
-若看到 `easytier-mesh.onrender.com` 对应的节点状态为 `Connected`，说明两端已成功建立 P2P/中继链路！
+# 密钥直接登录
+ssh root@10.144.144.90
 
----
-
-### 2. 通过虚拟 IP 登录容器 SSH
-
-组网成功后，直接通过容器的 EasyTier 虚拟 IP (`10.144.144.10`) 登录：
-
-```bash
-# 密码登录（端口 22 或 2222 均可）
-ssh root@10.144.144.10
-
-# 或指定端口 2222
-ssh -p 2222 root@10.144.144.10
+# 或指定端口 2222 登录
+ssh -p 2222 root@10.144.144.90
 ```
 
----
-
-### 3. 配置本地 `~/.ssh/config`（一键免密连接）
-
-在你的本地电脑编辑 `~/.ssh/config`，加入以下配置块：
-
+### 3. 配置本地 `~/.ssh/config`（一键秒连）
+在本地终端配置文件中添加：
 ```sshconfig
 Host render-box
-    HostName 10.144.144.10
+    HostName 10.144.144.90
     Port 22
     User root
     IdentityFile ~/.ssh/id_ed25519
-    ServerAliveInterval 30
+    ServerAliveInterval 15
     ServerAliveCountMax 3
     StrictHostKeyChecking no
     UserKnownHostsFile /dev/null
 ```
-
-保存后，无论何时只要本地 EasyTier 处于运行状态，即可直接在终端敲入：
-```bash
-ssh render-box
-```
-秒级进入 Render 容器的 Bash 环境！
+配置完成后，直接敲 `ssh render-box` 即可秒级进入容器终端！
 
 ---
 
-## 🛠️ 紧急维护通道：Web Terminal (`ttyd`)
+## 🛠️ 应急 Web Terminal 访问与技巧
 
-如果在特殊网络环境下 EasyTier 无法直连，或者组网参数配置错误导致失联：
-1. 用浏览器打开：`https://<your-render-domain>/shell/`
-2. 浏览器会弹出 Basic Auth 认证弹窗：
-   - 用户名：`admin`（或环境变量 `TTYD_USER`）
-   - 密码：环境变量 `TTYD_PASS`（或 `SSH_PASS`）
-3. 验证通过后直接在浏览器中打开全功能 Bash Shell，可检查容器内部网络、查看 `easytier-cli` 状态或修改密码。
-
----
-
-## ⏰ 防止 Render 免费实例休眠（保活）
-
-Render Free Tier 容器在 15 分钟无 HTTP 流量时会自动休眠。可通过配置监控进行存活探测：
-
-1. 注册免费的 [UptimeRobot](https://uptimerobot.com/) 或在已有 VPS 上配置 `crontab`。
-2. 监控 URL：`https://<your-render-domain>/health`
-3. 监控间隔：每 **10 分钟** 发送一次 HTTP GET 请求。
-4. 返回 `200 OK`，实例即可持久保持唤醒状态。
+当外部网络环境封锁了 EasyTier 或公网环境临时需要排障时：
+1. 访问：`https://<your-app>.onrender.com/shell/`
+2. 输入 BasicAuth 账号密码（`TTYD_USER` / `TTYD_PASS`）；
+3. **日常体验操作**：
+   - **滚轮翻页**：直接用鼠标向上滑动触控板即可查看前序几万行历史；
+   - **断线恢复**：即便关闭浏览器标签页或网络中断，重新打开瞬间回到上次的会话与任务；
+   - **多窗口管理**：支持 tmux 原生快捷键，`Ctrl-b c` 新建窗口，`Ctrl-b n`/`p` 切换窗口，或直接鼠标点击底部状态栏切换；
+   - **彻底重置**：若需完全销毁并重建环境，仅需在终端输入 `exit` 退出 tmux session，下次刷新即可自动获得崭新的终端会话。
 
 ---
 
-## 🌐 代理服务 (sing-box)
+## ⏰ 防止 Render 免费实例休眠（Keepalive）
 
-容器已集成 `sing-box`，提供内网与公网双向代理接入支持：
+Render 免费实例在无外部 HTTP 流量 **15 分钟** 后会自动休眠。可通过配置第三方拨测保持 7x24 小时常驻在线：
+1. 注册免费的 [Uptime Kuma](https://github.com/louislam/uptime-kuma) 或 [UptimeRobot](https://uptimerobot.com/)；
+2. 添加 HTTP(S) 监控项：
+   - 目标 URL：`https://<your-app>.onrender.com/health`
+   - 监控频率：每 **5 ~ 10 分钟** 发送一次 GET 请求；
+   - 判定状态：返回 `200 OK` 即可；
+3. 实例将永久保持活跃状态，随叫随到。
 
-1. **EasyTier 内网 Mixed 代理**：
-   - 监听：`0.0.0.0:10808`（已在 EasyTier `--tcp-whitelist` 放行）
-   - 协议：HTTP / SOCKS5 自适应
-   - 组网节点可通过 `socks5://10.144.144.90:10808` 或 `http://10.144.144.90:10808` 直接分流外部流量。
+---
 
+## 🌐 代理服务配置 (sing-box)
+
+1. **虚拟网内 Mixed 代理（HTTP / SOCKS5）**：
+   - 监听：`0.0.0.0:10808`（白名单放行）
+   - 组网节点可直接将代理设置为 `socks5://10.144.144.90:10808` 或 `http://10.144.144.90:10808`，直接借由容器出口访问外网。
 2. **公网 VLESS-WebSocket 接入**：
-   - 路径：`wss://<your-render-domain>/vless-ws`
-   - 协议：VLESS over WebSocket (Caddy HTTPS 终结反代至 `127.0.0.1:20808`)
-   - 默认 UUID：`1da2cc31-2c34-4b0b-b83c-ce3f7b8e6c2c`（可通过 `SINGBOX_UUID` 环境变量重设）
+   - 监听路径：`wss://<your-app>.onrender.com/vless-ws`
+   - 传输层：Caddy 负责 TLS 终结与反向代理，配合预设 `SINGBOX_UUID` 实现远程加密访问。
 
+---
+
+## 📄 开源许可证
+
+本项目基于 [MIT License](LICENSE) 开源发布，欢迎自由 Star、Fork 与二次定制！
